@@ -23,6 +23,7 @@ from config import (
 # Import handlers
 from handlers import basic_handlers, catalog_handlers, payment_handlers, admin_handlers
 from handlers.prodamus_hmac import ProdamusHmac
+from handlers.payment_handlers import handle_prodamus_payment
 from utils.channel import check_course_channels
 from google_sheets import get_courses_data
 
@@ -93,55 +94,103 @@ def _prodamus_webhook():
       - application/json — тогда берём JSON-объект
       - form-data / x-www-form-urlencoded — тогда берём request.form (аналог $_POST)
     """
-    if not PRODAMUS_SECRET_KEY or PRODAMUS_SECRET_KEY == "CHANGE_ME":
-        return "error: secret key not configured", 500
-
-    # Аналог $headers['Sign']
-    sign = request.headers.get("Sign")
-    if not sign:
-        return "error: signature not found", 400
-
-    # 1) Пытаемся прочитать JSON (если Prodamus шлёт application/json)
-    data = request.get_json(silent=True)
-
-    # 2) Если JSON нет — пробуем как форму (аналог $_POST)
-    if data is None:
-        form = request.form
-        if not form:
-            return "error: POST is empty", 400
-
-        # Эмуляция $_POST:
-        # если у ключа несколько значений, делаем список; если одно — строка
-        data_dict: Dict[str, Any] = {}
-        for key in form.keys():
-            values = form.getlist(key)
-            data_dict[key] = values if len(values) > 1 else values[0]
-        data = data_dict
-
-    # Теперь data — либо dict/list из JSON, либо dict как $_POST
     try:
-        is_valid = ProdamusHmac.verify(data, PRODAMUS_SECRET_KEY, sign)
+        print("[prodamus_webhook] Webhook received")
+        print(f"[prodamus_webhook] Method: {request.method}")
+        print(f"[prodamus_webhook] Content-Type: {request.content_type}")
+        print(f"[prodamus_webhook] Headers: {dict(request.headers)}")
+        
+        if not PRODAMUS_SECRET_KEY or PRODAMUS_SECRET_KEY == "CHANGE_ME":
+            print("[prodamus_webhook] ERROR: secret key not configured")
+            return "error: secret key not configured", 500
+
+        # Аналог $headers['Sign'] (проверяем оба варианта регистра)
+        sign = request.headers.get("Sign") or request.headers.get("sign")
+        if not sign:
+            print("[prodamus_webhook] ERROR: signature not found in headers")
+            print(f"[prodamus_webhook] Available headers: {list(request.headers.keys())}")
+            return "error: signature not found", 400
+
+        print(f"[prodamus_webhook] Signature found: {sign[:20]}...")
+
+        # 1) Пытаемся прочитать JSON (если Prodamus шлёт application/json)
+        data = request.get_json(silent=True)
+        print(f"[prodamus_webhook] JSON data: {data is not None}")
+
+        # 2) Если JSON нет — пробуем как форму (аналог $_POST)
+        if data is None:
+            print("[prodamus_webhook] No JSON data, trying form data")
+            form = request.form
+            if not form:
+                # Попробуем прочитать raw body как строку
+                raw_body = request.get_data(as_text=True)
+                print(f"[prodamus_webhook] No form data, raw body length: {len(raw_body) if raw_body else 0}")
+                if not raw_body or len(raw_body.strip()) == 0:
+                    print("[prodamus_webhook] ERROR: POST is empty")
+                    return "error: POST is empty", 400
+                # Если есть raw body, но нет form, возможно это URL-encoded строка
+                try:
+                    from urllib.parse import parse_qs
+                    parsed = parse_qs(raw_body, keep_blank_values=True)
+                    data_dict: Dict[str, Any] = {}
+                    for key, values in parsed.items():
+                        data_dict[key] = values if len(values) > 1 else values[0]
+                    data = data_dict
+                    print(f"[prodamus_webhook] Parsed URL-encoded data: {len(data)} fields")
+                except Exception as e:
+                    print(f"[prodamus_webhook] Failed to parse URL-encoded data: {e}")
+                    return "error: POST is empty", 400
+            else:
+                # Эмуляция $_POST:
+                # если у ключа несколько значений, делаем список; если одно — строка
+                data_dict: Dict[str, Any] = {}
+                for key in form.keys():
+                    values = form.getlist(key)
+                    data_dict[key] = values if len(values) > 1 else values[0]
+                data = data_dict
+                print(f"[prodamus_webhook] Parsed form data: {len(data)} fields")
+
+        # Теперь data — либо dict/list из JSON, либо dict как $_POST
+        try:
+            is_valid = ProdamusHmac.verify(data, PRODAMUS_SECRET_KEY, sign)
+        except Exception as e:
+            # На всякий случай, чтобы проще дебажить
+            print(f"[prodamus_webhook] verify error: {e}")
+            import traceback
+            traceback.print_exc()
+            return "error: internal verify error", 500
+
+        if not is_valid:
+            print("[prodamus_webhook] ERROR: signature incorrect")
+            return "error: signature incorrect", 400
+
+        # ----- здесь подпись УЖЕ прошла проверку -----
+        # Можешь безопасно обрабатывать оплату: создавать заказ, писать в БД и т.п.
+        # data тут уже Python-структура (dict/list) после канонизации входа.
+
+        # Пример логирования (аккуратно с персональными данными!)
+        print("[prodamus_webhook] valid payment data:", data)
+
+        # Обрабатываем оплату: находим покупателя, выдаём доступ к курсу, отправляем сообщение
+        try:
+            handle_prodamus_payment(bot, data)
+            print("[prodamus_webhook] payment processing completed successfully")
+            return "success", 200
+        except Exception as e:
+            # Логируем ошибку и возвращаем 500, чтобы Prodamus повторил запрос
+            print(f"[prodamus_webhook] ERROR processing payment: {e}")
+            import traceback
+            traceback.print_exc()
+            # Возвращаем 500, чтобы Prodamus повторил запрос позже
+            return "error: payment processing failed", 500
+
     except Exception as e:
-        # На всякий случай, чтобы проще дебажить
-        print(f"[prodamus_webhook] verify error: {e}")
-        return "error: internal verify error", 500
-
-    if not is_valid:
-        return "error: signature incorrect", 400
-
-    # ----- здесь подпись УЖЕ прошла проверку -----
-    # Можешь безопасно обрабатывать оплату: создавать заказ, писать в БД и т.п.
-    # data тут уже Python-структура (dict/list) после канонизации входа.
-
-    # Пример логирования (аккуратно с персональными данными!)
-    print("[prodamus_webhook] valid payment data:", data)
-
-    # TODO: вызвать свои функции:
-    #   - найти покупателя
-    #   - выдать доступ к курсу
-    #   - отправить сообщение в Telegram и т.п.
-
-    return "success", 200
+        # Общий обработчик ошибок на случай непредвиденных исключений
+        print(f"[prodamus_webhook] FATAL ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        # Возвращаем 500, чтобы Prodamus повторил запрос позже
+        return "error: internal server error", 500
 
 
 # Configure Telegram webhook at import time when running under WSGI
