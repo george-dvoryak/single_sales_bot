@@ -6,6 +6,7 @@ A simple, clean Telegram bot for selling courses with YooKassa payment integrati
 
 - 🎯 Course catalog from Google Sheets
 - 💳 YooKassa payments (via Telegram Payments API)
+- 💰 ProDAMUS payments (optional second payment method)
 - 🔐 Private channel access management
 - 📊 Admin panel with subscription management
 - 🔄 Automatic subscription expiry handling
@@ -21,7 +22,8 @@ single_sales_bot/
 │   ├── payment_handlers.py     # Payment processing (YooKassa)
 │   └── admin_handlers.py       # Admin commands
 ├── payments/          # Payment integrations
-│   └── yookassa.py            # YooKassa payment handler
+│   ├── yookassa.py            # YooKassa payment handler
+│   └── prodamus.py            # ProDAMUS payment handler
 ├── utils/             # Utility functions
 │   ├── text_utils.py          # Text formatting and cleaning
 │   ├── keyboards.py           # Keyboard builders
@@ -53,6 +55,12 @@ TELEGRAM_BOT_TOKEN=your_bot_token_here
 # Payments (YooKassa)
 PAYMENT_PROVIDER_TOKEN=your_yookassa_token_here
 CURRENCY=RUB
+
+# Payments (ProDAMUS) - Optional second payment method
+ENABLE_PRODAMUS=false
+PRODAMUS_TEST_MODE=true
+PRODAMUS_PAYFORM_URL=https://demo.payform.ru
+PRODAMUS_SECRET_KEY=your_secret_key_here
 
 # Database
 DATABASE_PATH=bot.db
@@ -134,10 +142,28 @@ python main.py
 5. Set `USE_WEBHOOK=True` in `.env`
 6. Reload the web app
 
+## Payment Methods
+
+### YooKassa (via Telegram Payments)
+The primary payment method using Telegram's native payment interface. Requires a provider token from BotFather linked to your YooKassa account.
+
+### ProDAMUS (Optional)
+An additional payment method that can be enabled alongside YooKassa. Key features:
+- External payment page with short URLs
+- Email collection for receipts
+- Webhook notifications for payment status
+- Signature verification for security
+
+To enable ProDAMUS:
+1. Set `ENABLE_PRODAMUS=true` in `.env`
+2. Configure `PRODAMUS_PAYFORM_URL` (your payment form URL)
+3. Set `PRODAMUS_SECRET_KEY` (from ProDAMUS dashboard)
+4. Add webhook URL in ProDAMUS dashboard: `https://yourdomain.com/prodamus_webhook`
+
 ## Key Improvements
 
 ✅ **Modular structure** - Code organized into logical modules  
-✅ **Single payment system** - Only YooKassa (removed Prodamus/Robokassa)  
+✅ **Multiple payment systems** - YooKassa and ProDAMUS support  
 ✅ **Clean code** - ~200 lines per file vs 1775 in old main.py  
 ✅ **Better error handling** - Proper exception handling throughout  
 ✅ **Clear separation of concerns** - Handlers, utils, payments separated  

@@ -14,7 +14,8 @@ from config import (
     WEBHOOK_URL, 
     WEBHOOK_PATH,
     WEBHOOK_SECRET_TOKEN,
-    ADMIN_IDS
+    ADMIN_IDS,
+    ENABLE_PRODAMUS
 )
 
 # Import handlers
@@ -70,6 +71,44 @@ def _webhook():
     except Exception as e:
         print(f"Error processing webhook update: {e}")
     return "OK", 200
+
+
+@application.post("/prodamus_webhook")
+def _prodamus_webhook():
+    """ProDAMUS payment webhook endpoint"""
+    if not ENABLE_PRODAMUS:
+        abort(404)
+    
+    try:
+        from payments.prodamus import verify_webhook_signature, parse_webhook_data, is_payment_successful
+        from handlers.payment_handlers import handle_prodamus_payment
+        
+        # Get signature from header
+        signature = request.headers.get("sign", "")
+        
+        # Get form data
+        form_data = request.form.to_dict()
+        
+        # Verify signature
+        if not verify_webhook_signature(form_data, signature):
+            print("ProDAMUS webhook: Invalid signature")
+            abort(403)
+        
+        # Parse webhook data
+        webhook_data = parse_webhook_data(form_data)
+        
+        print(f"ProDAMUS webhook received: order_id={webhook_data.get('order_id')}, status={webhook_data.get('payment_status')}")
+        
+        # Process payment
+        handle_prodamus_payment(bot, webhook_data)
+        
+        return "OK", 200
+        
+    except Exception as e:
+        print(f"Error processing ProDAMUS webhook: {e}")
+        import traceback
+        traceback.print_exc()
+        return "ERROR", 500
 
 
 # Configure Telegram webhook at import time when running under WSGI

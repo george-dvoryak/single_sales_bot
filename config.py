@@ -28,6 +28,12 @@ if not PAYMENT_PROVIDER_TOKEN:
     raise ValueError("PAYMENT_PROVIDER_TOKEN is required. Please set it in .env file")
 CURRENCY = os.getenv("CURRENCY", "RUB")
 
+# === PAYMENTS (ProDAMUS) ===
+ENABLE_PRODAMUS = get_bool_env("ENABLE_PRODAMUS", False)
+PRODAMUS_TEST_MODE = get_bool_env("PRODAMUS_TEST_MODE", True)
+PRODAMUS_PAYFORM_URL = os.getenv("PRODAMUS_PAYFORM_URL", "")
+PRODAMUS_SECRET_KEY = os.getenv("PRODAMUS_SECRET_KEY", "")
+
 # === SQLite DB ===
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
 
