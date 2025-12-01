@@ -4,7 +4,7 @@
 from telebot import types
 from google_sheets import get_courses_data, get_texts_data
 from db import has_active_subscription
-from utils.keyboards import create_catalog_keyboard
+from utils.keyboards import create_catalog_keyboard, create_course_buttons
 from utils.text_utils import strip_html
 
 
@@ -138,9 +138,9 @@ def register_handlers(bot):
         # Strip HTML from description too
         clean_desc = strip_html(desc) if desc else ""
         text = f"{formatted_name}\n{clean_desc}\n\nЦена: {price} руб.\nДоступ: {duration} мин."
-        ikb = types.InlineKeyboardMarkup()
-        ikb.add(types.InlineKeyboardButton("Купить", callback_data=f"pay_yk_{course_id}"))
-        ikb.add(types.InlineKeyboardButton("⬅️ Назад к каталогу", callback_data="back_to_catalog"))
+        
+        # Use the create_course_buttons function to get payment buttons (supports ProDAMUS)
+        ikb = create_course_buttons(course_id)
         
         # Try to edit existing message first, then fallback to sending new message
         message_sent = False
