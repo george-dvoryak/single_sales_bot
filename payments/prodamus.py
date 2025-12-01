@@ -2,9 +2,19 @@
 """ProDAMUS payment handler."""
 
 import hashlib
+import hmac
 import requests
-from urllib.parse import urlencode
+from urllib.parse import urlencode, parse_qsl
 from config import PRODAMUS_PAYFORM_URL, PRODAMUS_SECRET_KEY, PRODAMUS_TEST_MODE
+
+# Try to import prodamuspy library for proper HMAC verification
+try:
+    import prodamuspy
+    PRODAMUS_LIB_AVAILABLE = True
+    print("ProDAMUS: Using prodamuspy library for signature verification")
+except ImportError:
+    PRODAMUS_LIB_AVAILABLE = False
+    print("ProDAMUS: Warning - prodamuspy library not installed, using fallback verification")
 
 
 def generate_payment_link(order_id: str, customer_email: str, customer_phone: str, 
@@ -63,13 +73,13 @@ def generate_payment_link(order_id: str, customer_email: str, customer_phone: st
 
 def verify_webhook_signature(data: dict, signature: str) -> bool:
     """
-    Verify ProDAMUS webhook signature.
+    Verify ProDAMUS webhook signature using HMAC-SHA256.
     
-    According to ProDAMUS documentation:
+    ProDAMUS uses HMAC-SHA256, not plain SHA256!
+    According to their documentation:
     1. Sort parameters alphabetically by key
     2. Concatenate values with semicolons (;)
-    3. Append secret key
-    4. Calculate SHA256 hash
+    3. Calculate HMAC-SHA256 with secret key
     
     Args:
         data: Webhook data dictionary
@@ -93,6 +103,29 @@ def verify_webhook_signature(data: dict, signature: str) -> bool:
         return False
     
     try:
+        print(f"ProDAMUS: Starting signature verification")
+        print(f"ProDAMUS: Received signature: {signature}")
+        
+        # Method 1: Use prodamuspy library (recommended)
+        if PRODAMUS_LIB_AVAILABLE:
+            print("ProDAMUS: Using prodamuspy library for verification")
+            try:
+                prodamus = prodamuspy.PyProdamus(PRODAMUS_SECRET_KEY)
+                is_valid = prodamus.verify(data, signature)
+                
+                if is_valid:
+                    print(f"ProDAMUS: ✅ Signature verification SUCCESS (prodamuspy)")
+                else:
+                    print(f"ProDAMUS: ❌ Signature verification FAILED (prodamuspy)")
+                
+                return is_valid
+            except Exception as e:
+                print(f"ProDAMUS: Error using prodamuspy library: {e}")
+                print(f"ProDAMUS: Falling back to manual HMAC verification")
+        
+        # Method 2: Manual HMAC-SHA256 verification (fallback)
+        print("ProDAMUS: Using manual HMAC-SHA256 verification")
+        
         # Filter out the 'sign' parameter if it's in data
         filtered_data = {k: v for k, v in data.items() if k != 'sign'}
         
@@ -100,30 +133,30 @@ def verify_webhook_signature(data: dict, signature: str) -> bool:
         
         # Sort parameters alphabetically by key
         sorted_keys = sorted(filtered_data.keys())
-        print(f"ProDAMUS: Sorted keys: {sorted_keys}")
+        print(f"ProDAMUS: Sorted keys: {sorted_keys[:5]}..." if len(sorted_keys) > 5 else f"ProDAMUS: Sorted keys: {sorted_keys}")
         
         # Concatenate values with semicolons
         values_string = ";".join(str(filtered_data[key]) for key in sorted_keys)
-        print(f"ProDAMUS: Values string: {values_string[:100]}..." if len(values_string) > 100 else f"ProDAMUS: Values string: {values_string}")
+        print(f"ProDAMUS: Values string (first 100 chars): {values_string[:100]}...")
         
-        # Append secret key
-        string_to_hash = values_string + ";" + PRODAMUS_SECRET_KEY
-        print(f"ProDAMUS: String to hash length: {len(string_to_hash)}")
-        
-        # Calculate SHA256 hash
-        calculated_signature = hashlib.sha256(string_to_hash.encode('utf-8')).hexdigest()
+        # Calculate HMAC-SHA256 (NOT plain SHA256!)
+        calculated_signature = hmac.new(
+            PRODAMUS_SECRET_KEY.encode('utf-8'),
+            values_string.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
         
         # Compare signatures
-        is_valid = calculated_signature == signature
+        is_valid = hmac.compare_digest(calculated_signature, signature)
         
         print(f"ProDAMUS: Calculated signature: {calculated_signature}")
         print(f"ProDAMUS: Received signature:   {signature}")
         print(f"ProDAMUS: Signatures match: {is_valid}")
         
         if not is_valid:
-            print(f"ProDAMUS: ❌ Signature verification FAILED")
+            print(f"ProDAMUS: ❌ Signature verification FAILED (HMAC)")
         else:
-            print(f"ProDAMUS: ✅ Signature verification SUCCESS")
+            print(f"ProDAMUS: ✅ Signature verification SUCCESS (HMAC)")
         
         return is_valid
         
