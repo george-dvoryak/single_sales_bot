@@ -1,18 +1,20 @@
 # config.py
+"""Configuration settings for the bot."""
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-# This will automatically load .env from the project root directory
 env_path = Path(__file__).parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
-# Helper function to convert string "True"/"False" to boolean
+
 def get_bool_env(key: str, default: bool = False) -> bool:
     """Get boolean from environment variable. Accepts 'true', 'True', 'TRUE', '1', etc."""
     value = os.getenv(key, str(default))
     return value.lower() in ("true", "1", "yes", "on")
+
 
 # === TELEGRAM ===
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -25,24 +27,6 @@ PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN")
 if not PAYMENT_PROVIDER_TOKEN:
     raise ValueError("PAYMENT_PROVIDER_TOKEN is required. Please set it in .env file")
 CURRENCY = os.getenv("CURRENCY", "RUB")
-
-# === PAYMENTS (Prodamus direct integration) ===
-# Feature flag to show Prodamus buttons/flows in the bot UI
-ENABLE_PRODAMUS = get_bool_env("ENABLE_PRODAMUS", True)
-# Test mode flag (use test environment for development/testing)
-# Set to "True" to use test environment, "False" for production
-PRODAMUS_TEST_MODE = get_bool_env("PRODAMUS_TEST_MODE", True)
-# Payment form URL (test or production)
-# Test: testwork1.payform.ru
-# Production: your production payform domain
-PRODAMUS_PAYFORM_URL = os.getenv("PRODAMUS_PAYFORM_URL", "testwork1.payform.ru")
-# Secret key for webhook verification (from Prodamus dashboard)
-PRODAMUS_SECRET_KEY = os.getenv("PRODAMUS_SECRET_KEY", "")
-# System ID (if required by Prodamus API)
-PRODAMUS_SYSTEM_ID = os.getenv("PRODAMUS_SYSTEM_ID", "")
-# Test webhook URL for debugging (e.g., webhook.site URL)
-# If set, all webhook data will also be forwarded to this URL for testing
-PRODAMUS_TEST_WEBHOOK_URL = os.getenv("PRODAMUS_TEST_WEBHOOK_URL", "")
 
 # === SQLite DB ===
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
