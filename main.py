@@ -7,7 +7,9 @@ Main entry point for the bot (polling or webhook mode)
 import time
 import traceback
 import json
+import os
 from datetime import datetime
+from pathlib import Path
 import telebot
 from flask import Flask, request, abort
 from typing import Dict, Any
@@ -15,6 +17,12 @@ from typing import Dict, Any
 # #region agent log
 def _debug_log(location, message, data=None, hypothesis_id=None):
     try:
+        # Use relative path that works on both local and PythonAnywhere
+        script_dir = Path(__file__).parent.absolute()
+        log_dir = script_dir / ".cursor"
+        log_dir.mkdir(exist_ok=True)
+        log_path = log_dir / "debug.log"
+        
         log_entry = {
             "timestamp": int(datetime.now().timestamp() * 1000),
             "location": location,
@@ -26,9 +34,11 @@ def _debug_log(location, message, data=None, hypothesis_id=None):
             log_entry["data"] = data
         if hypothesis_id:
             log_entry["hypothesisId"] = hypothesis_id
-        with open("/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log", "a") as f:
+        with open(log_path, "a") as f:
             f.write(json.dumps(log_entry) + "\n")
-    except:
+    except Exception as e:
+        # Silently fail - don't crash the app if logging fails
+        print(f"[debug_log] Failed to write log: {e}")
         pass
 # #endregion agent log
 
