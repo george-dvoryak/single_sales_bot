@@ -146,6 +146,21 @@ def _prodamus_webhook():
         if len(raw_body) > 300:
             print(f"📦 Raw body (last 100 chars):\n...{raw_body[-100:]}")
         
+        # Also try parsing raw body with parse_qsl (like prodamuspy does)
+        print(f"\n🔍 Alternative: Parsing raw body with parse_qsl...")
+        from urllib.parse import parse_qsl
+        try:
+            parsed_qsl = dict(parse_qsl(raw_body, keep_blank_values=True))
+            print(f"   parse_qsl result: {len(parsed_qsl)} fields")
+            print(f"   parse_qsl sample keys: {list(parsed_qsl.keys())[:10]}")
+            # Use this if it's different from Flask's parsing
+            if parsed_qsl != body_dict_flat:
+                print(f"   ⚠️  parse_qsl differs from Flask request.form!")
+                print(f"   Using parse_qsl result for verification...")
+                body_dict_flat = parsed_qsl
+        except Exception as e:
+            print(f"   ❌ Error parsing with parse_qsl: {e}")
+        
         # Also check what Flask's request.form parsed
         print(f"\n🔍 COMPARISON: Flask request.form vs raw body")
         flask_parsed = request.form.to_dict()
@@ -184,15 +199,28 @@ def _prodamus_webhook():
             return "error: POST data is empty", 400
         
         # Parse POST data - use Flask's request.form (equivalent to PHP $_POST)
-        # IMPORTANT: Keep flat structure for signature verification (ProDAMUS signs flat keys like products[0][name])
         body_dict_flat = request.form.to_dict()
         
         if not body_dict_flat:
             print("❌ ERROR: Parsed POST data is empty")
             return "error: POST data is empty", 400
         
-        print(f"📦 Flat structure (for signature verification): {len(body_dict_flat)} fields")
+        print(f"📦 Flat structure (from Flask request.form): {len(body_dict_flat)} fields")
         print(f"📦 Sample flat keys: {list(body_dict_flat.keys())[:10]}")
+        
+        # Also try parse_qsl from raw body (might be more accurate)
+        from urllib.parse import parse_qsl, unquote
+        try:
+            parsed_qsl = dict(parse_qsl(raw_body, keep_blank_values=True))
+            # URL decode values
+            parsed_qsl = {k: unquote(v) for k, v in parsed_qsl.items()}
+            print(f"📦 parse_qsl structure: {len(parsed_qsl)} fields")
+            print(f"📦 parse_qsl sample keys: {list(parsed_qsl.keys())[:10]}")
+            if parsed_qsl != body_dict_flat:
+                print(f"⚠️  parse_qsl differs from Flask - using parse_qsl result")
+                body_dict_flat = parsed_qsl
+        except Exception as e:
+            print(f"⚠️  Error with parse_qsl: {e}, using Flask result")
         
         # Handle PHP-style arrays like products[0][name]
         # Convert products[0][name]=value to products: {0: {name: value}}
@@ -293,10 +321,18 @@ def _prodamus_webhook():
         print(f"   Total fields: {len(body_dict_for_verification)}")
         print(f"   Sample keys: {list(body_dict_for_verification.keys())[:10]}")
         
-        # Convert dict to JSON string (like the example: post_data = r"""{"date":"...",...}""")
-        print(f"\n📋 Converting dict to JSON string (like example code)...")
+        # Parse PHP arrays to nested structure (like prodamuspy does)
+        # This converts products[0][name] to products: {0: {name: ...}}
+        print(f"\n📋 Parsing PHP arrays to nested structure...")
+        body_dict_nested = parse_php_arrays(body_dict_for_verification)
+        print(f"   Nested structure keys: {list(body_dict_nested.keys())[:10]}")
+        if "products" in body_dict_nested:
+            print(f"   Products structure: {body_dict_nested['products']}")
+        
+        # Convert nested dict to JSON string (like the example: post_data = r"""{"date":"...",...}""")
+        print(f"\n📋 Converting nested dict to JSON string (like example code)...")
         import json
-        post_data_json = json.dumps(body_dict_for_verification, ensure_ascii=False, separators=(',', ':'))
+        post_data_json = json.dumps(body_dict_nested, ensure_ascii=False, separators=(',', ':'))
         print(f"   JSON string length: {len(post_data_json)} chars")
         print(f"   JSON preview (first 300 chars): {post_data_json[:300]}...")
         if len(post_data_json) > 300:
