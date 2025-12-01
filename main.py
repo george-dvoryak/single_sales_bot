@@ -82,7 +82,48 @@ def _prodamus_webhook():
         abort(404)
     
     try:
-        import prodamuspy
+        # Try different import methods for prodamuspy
+        try:
+            import prodamuspy
+            print("=" * 80)
+            print("🔍 DEBUGGING prodamuspy module")
+            print("=" * 80)
+            print(f"✅ prodamuspy module imported successfully")
+            print(f"📦 Module file: {prodamuspy.__file__ if hasattr(prodamuspy, '__file__') else 'unknown'}")
+            print(f"📦 Module version: {prodamuspy.__version__ if hasattr(prodamuspy, '__version__') else 'unknown'}")
+            print(f"📦 All attributes in prodamuspy module:")
+            for attr in dir(prodamuspy):
+                if not attr.startswith('_'):
+                    print(f"   - {attr}: {type(getattr(prodamuspy, attr))}")
+            print("=" * 80)
+            
+            # Try different class names
+            if hasattr(prodamuspy, 'PyProdamus'):
+                ProdamusClass = prodamuspy.PyProdamus
+                print("✅ Found: prodamuspy.PyProdamus")
+            elif hasattr(prodamuspy, 'Prodamus'):
+                ProdamusClass = prodamuspy.Prodamus
+                print("✅ Found: prodamuspy.Prodamus")
+            elif hasattr(prodamuspy, 'prodamus'):
+                # It might be a submodule
+                print("🔍 Found prodamuspy.prodamus submodule, checking...")
+                submodule = getattr(prodamuspy, 'prodamus')
+                print(f"📦 Submodule attributes: {[a for a in dir(submodule) if not a.startswith('_')]}")
+                if hasattr(submodule, 'PyProdamus'):
+                    ProdamusClass = submodule.PyProdamus
+                    print("✅ Found: prodamuspy.prodamus.PyProdamus")
+                else:
+                    raise AttributeError(f"Cannot find PyProdamus class. Available in module: {[a for a in dir(prodamuspy) if not a.startswith('_')]}")
+            else:
+                raise AttributeError(f"Cannot find PyProdamus or Prodamus class. Available in module: {[a for a in dir(prodamuspy) if not a.startswith('_')]}")
+                
+        except ImportError as e:
+            print(f"❌ Import error: {e}")
+            return {"error": f"prodamuspy import failed: {e}"}, 500
+        except AttributeError as e:
+            print(f"❌ Attribute error: {e}")
+            return {"error": str(e)}, 500
+        
         from handlers.payment_handlers import handle_prodamus_payment
         
         print("=" * 80)
@@ -108,7 +149,7 @@ def _prodamus_webhook():
         print(f"🔑 Secret key length: {len(PRODAMUS_SECRET_KEY)} chars")
         print(f"🔑 Secret key (first 10 chars): {PRODAMUS_SECRET_KEY[:10]}...")
         
-        prodamus = prodamuspy.PyProdamus(PRODAMUS_SECRET_KEY)
+        prodamus = ProdamusClass(PRODAMUS_SECRET_KEY)
         print("✅ prodamuspy initialized successfully")
         
         print("\n" + "=" * 80)
