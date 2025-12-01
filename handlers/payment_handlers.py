@@ -187,14 +187,23 @@ def register_handlers(bot):
         bot.send_message(
             user_id,
             "Для оплаты через ProDAMUS необходимо указать ваш email.\n\n"
-            "Пожалуйста, отправьте ваш email:"
+            "Пожалуйста, отправьте ваш email:\n\n"
+            "Отправьте /start чтобы отменить."
         )
 
-    @bot.message_handler(func=lambda m: m.from_user.id in _email_requests and _email_requests[m.from_user.id].get("step") == "waiting_email")
+    @bot.message_handler(content_types=['text'], func=lambda m: m.from_user.id in _email_requests and _email_requests[m.from_user.id].get("step") == "waiting_email")
     def handle_email_input(message: types.Message):
         """Handle email input from user for ProDAMUS payment"""
         user_id = message.from_user.id
         email = message.text.strip()
+        
+        print(f"ProDAMUS: Received email input from user {user_id}: {email}")
+        
+        # If user sends a command, cancel email collection
+        if email.startswith('/'):
+            del _email_requests[user_id]
+            bot.send_message(user_id, "Сбор email отменён. Используйте /start чтобы начать заново.")
+            return
         
         # Basic email validation
         if "@" not in email or "." not in email.split("@")[1]:

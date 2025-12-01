@@ -28,9 +28,10 @@ from google_sheets import get_courses_data
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode=None, threaded=False)
 
 # Register all handlers
+# IMPORTANT: payment_handlers must be registered FIRST to give priority to email collection
+payment_handlers.register_handlers(bot)
 basic_handlers.register_handlers(bot)
 catalog_handlers.register_handlers(bot)
-payment_handlers.register_handlers(bot)
 admin_handlers.register_handlers(bot)
 
 # Flask app for webhook mode (WSGI server on PythonAnywhere)
@@ -83,21 +84,35 @@ def _prodamus_webhook():
         from payments.prodamus import verify_webhook_signature, parse_webhook_data, is_payment_successful
         from handlers.payment_handlers import handle_prodamus_payment
         
+        # Log incoming webhook for debugging
+        print("=" * 60)
+        print("ProDAMUS webhook received!")
+        print(f"Headers: {dict(request.headers)}")
+        print(f"Form data: {request.form.to_dict()}")
+        print("=" * 60)
+        
         # Get signature from header
         signature = request.headers.get("sign", "")
+        print(f"Signature from header: {signature}")
         
         # Get form data
         form_data = request.form.to_dict()
         
         # Verify signature
-        if not verify_webhook_signature(form_data, signature):
-            print("ProDAMUS webhook: Invalid signature")
+        is_valid = verify_webhook_signature(form_data, signature)
+        print(f"Signature valid: {is_valid}")
+        
+        if not is_valid:
+            print("ProDAMUS webhook: Invalid signature - REJECTED")
+            # Still log the data for debugging
+            print(f"Order ID: {form_data.get('order_id')}")
+            print(f"Payment status: {form_data.get('payment_status')}")
             abort(403)
         
         # Parse webhook data
         webhook_data = parse_webhook_data(form_data)
         
-        print(f"ProDAMUS webhook received: order_id={webhook_data.get('order_id')}, status={webhook_data.get('payment_status')}")
+        print(f"ProDAMUS webhook ACCEPTED: order_id={webhook_data.get('order_id')}, status={webhook_data.get('payment_status')}")
         
         # Process payment
         handle_prodamus_payment(bot, webhook_data)

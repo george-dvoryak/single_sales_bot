@@ -4,7 +4,7 @@
 import hashlib
 import requests
 from urllib.parse import urlencode
-from config import PRODAMUS_PAYFORM_URL, PRODAMUS_SECRET_KEY
+from config import PRODAMUS_PAYFORM_URL, PRODAMUS_SECRET_KEY, PRODAMUS_TEST_MODE
 
 
 def generate_payment_link(order_id: str, customer_email: str, customer_phone: str, 
@@ -78,22 +78,37 @@ def verify_webhook_signature(data: dict, signature: str) -> bool:
     Returns:
         True if signature is valid, False otherwise
     """
+    # In test mode, skip signature verification for easier testing
+    if PRODAMUS_TEST_MODE:
+        print("ProDAMUS: TEST MODE - Skipping signature verification")
+        print("ProDAMUS: ⚠️  WARNING: This should only be used for testing!")
+        return True
+    
     if not PRODAMUS_SECRET_KEY:
         print("ProDAMUS: PRODAMUS_SECRET_KEY is not configured, skipping signature verification")
         return True  # Allow webhooks if secret key is not set (not recommended for production)
+    
+    if not signature:
+        print("ProDAMUS: No signature provided in webhook")
+        return False
     
     try:
         # Filter out the 'sign' parameter if it's in data
         filtered_data = {k: v for k, v in data.items() if k != 'sign'}
         
+        print(f"ProDAMUS: Verifying signature for {len(filtered_data)} parameters")
+        
         # Sort parameters alphabetically by key
         sorted_keys = sorted(filtered_data.keys())
+        print(f"ProDAMUS: Sorted keys: {sorted_keys}")
         
         # Concatenate values with semicolons
         values_string = ";".join(str(filtered_data[key]) for key in sorted_keys)
+        print(f"ProDAMUS: Values string: {values_string[:100]}..." if len(values_string) > 100 else f"ProDAMUS: Values string: {values_string}")
         
         # Append secret key
         string_to_hash = values_string + ";" + PRODAMUS_SECRET_KEY
+        print(f"ProDAMUS: String to hash length: {len(string_to_hash)}")
         
         # Calculate SHA256 hash
         calculated_signature = hashlib.sha256(string_to_hash.encode('utf-8')).hexdigest()
@@ -101,15 +116,21 @@ def verify_webhook_signature(data: dict, signature: str) -> bool:
         # Compare signatures
         is_valid = calculated_signature == signature
         
+        print(f"ProDAMUS: Calculated signature: {calculated_signature}")
+        print(f"ProDAMUS: Received signature:   {signature}")
+        print(f"ProDAMUS: Signatures match: {is_valid}")
+        
         if not is_valid:
-            print(f"ProDAMUS: Signature verification failed")
-            print(f"ProDAMUS: Expected: {calculated_signature}")
-            print(f"ProDAMUS: Received: {signature}")
+            print(f"ProDAMUS: ❌ Signature verification FAILED")
+        else:
+            print(f"ProDAMUS: ✅ Signature verification SUCCESS")
         
         return is_valid
         
     except Exception as e:
         print(f"ProDAMUS: Error verifying signature: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
