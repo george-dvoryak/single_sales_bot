@@ -72,22 +72,6 @@ def generate_payment_link(order_id: str, customer_email: str, customer_phone: st
 
 
 def verify_webhook_signature(data: dict, signature: str) -> bool:
-    """
-    Verify ProDAMUS webhook signature using HMAC-SHA256.
-    
-    ProDAMUS uses HMAC-SHA256, not plain SHA256!
-    According to their documentation:
-    1. Sort parameters alphabetically by key
-    2. Concatenate values with semicolons (;)
-    3. Calculate HMAC-SHA256 with secret key
-    
-    Args:
-        data: Webhook data dictionary
-        signature: Signature from 'sign' header
-    
-    Returns:
-        True if signature is valid, False otherwise
-    """
     # In test mode, skip signature verification for easier testing
     if PRODAMUS_TEST_MODE:
         print("ProDAMUS: TEST MODE - Skipping signature verification")

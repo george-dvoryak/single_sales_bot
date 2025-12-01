@@ -96,7 +96,7 @@ def _prodamus_webhook():
         print(f"Signature from header: {signature}")
         
         # Get form data
-        form_data = request.form.to_dict()
+        raw_body = request.get_data(as_text=True)
         
         # Verify signature
         is_valid = verify_webhook_signature(form_data, signature)
