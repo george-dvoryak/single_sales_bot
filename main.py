@@ -293,12 +293,21 @@ def _prodamus_webhook():
         print(f"   Total fields: {len(body_dict_for_verification)}")
         print(f"   Sample keys: {list(body_dict_for_verification.keys())[:10]}")
         
+        # Convert dict to JSON string (like the example: post_data = r"""{"date":"...",...}""")
+        print(f"\n📋 Converting dict to JSON string (like example code)...")
+        import json
+        post_data_json = json.dumps(body_dict_for_verification, ensure_ascii=False, separators=(',', ':'))
+        print(f"   JSON string length: {len(post_data_json)} chars")
+        print(f"   JSON preview (first 300 chars): {post_data_json[:300]}...")
+        if len(post_data_json) > 300:
+            print(f"   JSON preview (last 100 chars): ...{post_data_json[-100:]}")
+        
         # Try to recreate the signature to see if body was modified
         print(f"\n🔍 SIGNATURE INTEGRITY CHECK:")
         try:
-            # Calculate what signature SHOULD be based on FLAT data (like PHP $_POST)
-            print(f"   Using FLAT structure for signature calculation...")
-            calculated_sign = HmacPy.create(body_dict_for_verification, PRODAMUS_SECRET_KEY)
+            # Calculate what signature SHOULD be based on JSON string (like example code)
+            print(f"   Using JSON string for signature calculation (like example: post_data = r\"\"\"...\"\"\")...")
+            calculated_sign = HmacPy.create(post_data_json, PRODAMUS_SECRET_KEY)
             print(f"🔐 Calculated signature (from parsed data): {calculated_sign}")
             print(f"🔐 Received signature (from header):        {received_sign}")
             
@@ -329,12 +338,12 @@ def _prodamus_webhook():
             import traceback
             traceback.print_exc()
         
-        print(f"\n🔍 Calling HmacPy.verify() with FLAT structure...")
-        print(f"   - body_dict_for_verification type: {type(body_dict_for_verification).__name__}")
-        print(f"   - body_dict_for_verification keys: {list(body_dict_for_verification.keys())[:10]}...")
+        print(f"\n🔍 Calling HmacPy.verify() with JSON string (like example code)...")
+        print(f"   - post_data_json type: {type(post_data_json).__name__}")
+        print(f"   - post_data_json length: {len(post_data_json)} chars")
         print(f"   - signature: {received_sign[:30]}...")
         
-        is_valid = HmacPy.verify(body_dict_for_verification, PRODAMUS_SECRET_KEY, received_sign)
+        is_valid = HmacPy.verify(post_data_json, PRODAMUS_SECRET_KEY, received_sign)
         
         print(f"\n🔍 Verification result: {is_valid}")
         
@@ -345,21 +354,9 @@ def _prodamus_webhook():
             for key, value in list(body_dict_for_verification.items())[:10]:
                 print(f"   {key}: {value} (type: {type(value).__name__})")
             
-            # Show what the JSON would look like
-            print(f"\n🔍 Showing JSON representation that would be signed...")
-            try:
-                import json
-                # Sort and convert like HmacPy does
-                sorted_data = dict(sorted(body_dict_for_verification.items()))
-                # Convert all to strings
-                str_data = {k: str(v) for k, v in sorted_data.items()}
-                json_str = json.dumps(str_data, ensure_ascii=False, separators=(',', ':'))
-                print(f"   JSON string length: {len(json_str)}")
-                print(f"   JSON preview (first 300 chars): {json_str[:300]}...")
-                if len(json_str) > 300:
-                    print(f"   JSON preview (last 100 chars): ...{json_str[-100:]}")
-            except Exception as e:
-                print(f"   ❌ Error creating JSON: {e}")
+            print(f"\n📦 JSON string that was used for verification:")
+            print(f"   Length: {len(post_data_json)} chars")
+            print(f"   Full JSON: {post_data_json}")
         
         if not is_valid:
             print("\n" + "=" * 80)
