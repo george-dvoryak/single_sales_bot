@@ -15,7 +15,8 @@ from config import (
     WEBHOOK_PATH,
     WEBHOOK_SECRET_TOKEN,
     ADMIN_IDS,
-    ENABLE_PRODAMUS
+    ENABLE_PRODAMUS,
+    PRODAMUS_SECRET_KEY
 )
 
 # Import handlers
@@ -81,7 +82,12 @@ def _prodamus_webhook():
         abort(404)
     
     try:
-        from payments.prodamus import verify_webhook_signature, parse_webhook_data, is_payment_successful
+        from payments.prodamus import (
+            verify_webhook_signature, 
+            parse_webhook_data, 
+            is_payment_successful,
+            PRODAMUS_LIB_AVAILABLE
+        )
         from handlers.payment_handlers import handle_prodamus_payment
         
         # Log incoming webhook for debugging
@@ -91,33 +97,40 @@ def _prodamus_webhook():
         print(f"Content-Type: {request.content_type}")
         print(f"Headers: {dict(request.headers)}")
         
-        # Get raw body for logging
-        raw_body = request.get_data(as_text=True)
-        print(f"Raw body: {raw_body[:500]}...")  # First 500 chars
-        
-        # Parse form data (ProDAMUS sends application/x-www-form-urlencoded)
-        form_data = request.form.to_dict()
-        print(f"Parsed form data keys: {list(form_data.keys())}")
-        print(f"Parsed form data: {form_data}")
-        print("=" * 60)
-        
-        # Get signature from header
+        # Get signature from header first
         signature = request.headers.get("sign", "")
         print(f"Signature from header: '{signature}'")
         
+        # Get raw body (this is what ProDAMUS sends)
+        raw_body = request.get_data(as_text=True)
+        print(f"Raw body: {raw_body[:500]}...")  # First 500 chars
+        
+        # Parse body using prodamuspy library (handles PHP arrays correctly)
+        form_data = None
+        if PRODAMUS_LIB_AVAILABLE:
+            try:
+                # Import prodamuspy to parse the body
+                import prodamuspy
+                print("Using prodamuspy.parse() to parse body...")
+                prodamus_parser = prodamuspy.PyProdamus(PRODAMUS_SECRET_KEY)
+                form_data = prodamus_parser.parse(raw_body)
+                print(f"✅ Parsed with prodamuspy: {len(form_data)} fields")
+            except Exception as e:
+                print(f"⚠️  prodamuspy parsing error: {e}")
+                print("Falling back to request.form.to_dict()...")
+                form_data = request.form.to_dict()
+        else:
+            print("prodamuspy not available, using request.form.to_dict()...")
+            form_data = request.form.to_dict()
+        
+        print(f"Parsed form data keys: {list(form_data.keys())}")
+        print(f"Form data sample: {dict(list(form_data.items())[:5])}...")  # First 5 items
+        print("=" * 60)
+        
         # Check if we have data
         if not form_data:
-            print("ERROR: No form data received!")
-            print(f"Trying to parse raw body as form data...")
-            from urllib.parse import parse_qs
-            try:
-                parsed = parse_qs(raw_body)
-                # parse_qs returns lists, convert to single values
-                form_data = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in parsed.items()}
-                print(f"Parsed from raw body: {form_data}")
-            except Exception as e:
-                print(f"Failed to parse raw body: {e}")
-                return "ERROR: No data", 400
+            print("❌ ERROR: No form data received!")
+            return {"error": "No data in request body"}, 400
         
         # Verify signature
         is_valid = verify_webhook_signature(form_data, signature)

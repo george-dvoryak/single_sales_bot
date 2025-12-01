@@ -7,14 +7,15 @@ import requests
 from urllib.parse import urlencode, parse_qsl
 from config import PRODAMUS_PAYFORM_URL, PRODAMUS_SECRET_KEY, PRODAMUS_TEST_MODE
 
-# Try to import prodamuspy library for proper HMAC verification
+# Try to import prodamuspy library for proper HMAC verification and parsing
 try:
     import prodamuspy
     PRODAMUS_LIB_AVAILABLE = True
-    print("ProDAMUS: Using prodamuspy library for signature verification")
+    print("ProDAMUS: prodamuspy library loaded successfully")
 except ImportError:
+    prodamuspy = None
     PRODAMUS_LIB_AVAILABLE = False
-    print("ProDAMUS: Warning - prodamuspy library not installed, using fallback verification")
+    print("ProDAMUS: Warning - prodamuspy library not installed, using fallback methods")
 
 
 def generate_payment_link(order_id: str, customer_email: str, customer_phone: str, 
