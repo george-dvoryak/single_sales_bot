@@ -26,7 +26,6 @@ PURCHASE_RECEIPT_MSG = texts.get("purchase_receipt_message", "Чек об опл
 
 def handle_prodamus_payment(bot, webhook_data: dict):
     """Handle ProDAMUS payment webhook notification"""
-    from payments.prodamus import is_payment_successful
     
     order_id = webhook_data.get("order_id", "")
     payment_status = webhook_data.get("payment_status", "")
@@ -60,7 +59,8 @@ def handle_prodamus_payment(bot, webhook_data: dict):
     duration = int(course.get("duration_minutes", 0))
     channel = str(course.get("channel", ""))
     
-    if is_payment_successful(webhook_data):
+    # Check if payment was successful
+    if payment_status.lower() == "success":
         # Successful payment - grant access
         print(f"ProDAMUS: Successful payment for user {user_id}, course {course_id}")
         

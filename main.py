@@ -82,99 +82,63 @@ def _prodamus_webhook():
         abort(404)
     
     try:
-        from payments.prodamus import (
-            verify_webhook_signature, 
-            parse_webhook_data, 
-            is_payment_successful,
-            PRODAMUS_LIB_AVAILABLE
-        )
+        import prodamuspy
         from handlers.payment_handlers import handle_prodamus_payment
         
-        # Log incoming webhook for debugging
         print("=" * 60)
         print("ProDAMUS webhook received!")
-        print(f"Method: {request.method}")
-        print(f"Content-Type: {request.content_type}")
-        print(f"Headers: {dict(request.headers)}")
         
-        # Get signature from header first
-        signature = request.headers.get("sign", "")
-        print(f"Signature from header: '{signature}'")
+        # Step 0: Init prodamuspy with secret key from .env
+        prodamus = prodamuspy.PyProdamus(PRODAMUS_SECRET_KEY)
+        print(f"✅ Initialized prodamuspy with secret key")
         
-        # Get raw body (this is what ProDAMUS sends)
+        # Step 1: Get raw body from webhook
         raw_body = request.get_data(as_text=True)
-        print(f"Raw body: {raw_body[:500]}...")  # First 500 chars
+        print(f"Raw body: {raw_body[:200]}...")
         
-        # Parse body using prodamuspy library (handles PHP arrays correctly)
-        form_data = None
-        if PRODAMUS_LIB_AVAILABLE:
-            try:
-                # Import prodamuspy to parse the body
-                import prodamuspy
-                print("Using prodamuspy.parse() to parse body...")
-                prodamus_parser = prodamuspy.PyProdamus(PRODAMUS_SECRET_KEY)
-                form_data = prodamus_parser.parse(raw_body)
-                print(f"✅ Parsed with prodamuspy: {len(form_data)} fields")
-            except Exception as e:
-                print(f"⚠️  prodamuspy parsing error: {e}")
-                print("Falling back to request.form.to_dict()...")
-                form_data = request.form.to_dict()
-        else:
-            print("prodamuspy not available, using request.form.to_dict()...")
-            form_data = request.form.to_dict()
+        # Step 2: Parse body using prodamus.parse()
+        body_dict = prodamus.parse(raw_body)
+        print(f"✅ Parsed body: {len(body_dict)} fields")
+        print(f"Payment status: {body_dict.get('payment_status')}")
+        print(f"Order ID: {body_dict.get('order_id')}")
         
-        print(f"Parsed form data keys: {list(form_data.keys())}")
-        print(f"Form data sample: {dict(list(form_data.items())[:5])}...")  # First 5 items
-        print("=" * 60)
+        # Step 3: Get signature from header and verify
+        received_sign = request.headers.get("sign", "")
+        print(f"Received signature: {received_sign[:20]}...")
         
-        # Check if we have data
-        if not form_data:
-            print("❌ ERROR: No form data received!")
-            return {"error": "No data in request body"}, 400
-        
-        # Verify signature
-        is_valid = verify_webhook_signature(form_data, signature)
+        is_valid = prodamus.verify(body_dict, received_sign)
         print(f"Signature valid: {is_valid}")
         
         if not is_valid:
+            print("❌ Invalid signature - REJECTED")
             print("=" * 60)
-            print("❌ ProDAMUS webhook: Invalid signature - REJECTED")
-            print(f"Order ID: {form_data.get('order_id')}")
-            print(f"Payment status: {form_data.get('payment_status')}")
-            print(f"Customer email: {form_data.get('customer_email')}")
-            print(f"Sum: {form_data.get('sum')}")
+            return {"error": "Invalid signature"}, 403
+        
+        print("✅ Signature verified!")
+        
+        # Step 4: Check payment status and grant access if success
+        payment_status = body_dict.get("payment_status", "")
+        print(f"Payment status: {payment_status}")
+        
+        if payment_status.lower() == "success":
+            print("✅ Payment successful - granting access")
             print("=" * 60)
-            
-            # Return error response instead of abort
-            return {
-                "error": "Invalid signature",
-                "message": "Webhook signature verification failed"
-            }, 403
-        
-        # Parse webhook data
-        webhook_data = parse_webhook_data(form_data)
-        
-        print("=" * 60)
-        print(f"✅ ProDAMUS webhook ACCEPTED!")
-        print(f"Order ID: {webhook_data.get('order_id')}")
-        print(f"Payment status: {webhook_data.get('payment_status')}")
-        print(f"Sum: {webhook_data.get('sum')}")
-        print(f"Customer email: {webhook_data.get('customer_email')}")
-        print("=" * 60)
-        
-        # Process payment
-        handle_prodamus_payment(bot, webhook_data)
-        
-        print("✅ Payment processed successfully")
-        return {"status": "ok", "message": "Webhook processed"}, 200
+            handle_prodamus_payment(bot, body_dict)
+            return {"status": "ok"}, 200
+        else:
+            print(f"❌ Payment not successful: {payment_status}")
+            print("=" * 60)
+            # Still notify about failed payment
+            handle_prodamus_payment(bot, body_dict)
+            return {"status": "ok", "payment_status": payment_status}, 200
         
     except Exception as e:
         print("=" * 60)
-        print(f"❌ Error processing ProDAMUS webhook: {e}")
+        print(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()
         print("=" * 60)
-        return {"error": str(e), "message": "Internal server error"}, 500
+        return {"error": str(e)}, 500
 
 
 # Configure Telegram webhook at import time when running under WSGI
