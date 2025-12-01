@@ -82,42 +82,12 @@ def _prodamus_webhook():
         abort(404)
     
     try:
-        # Try different import methods for prodamuspy
-        try:
-            import prodamuspy
-            print("=" * 80)
-            print("🔍 DEBUGGING prodamuspy module")
-            print("=" * 80)
-            print(f"✅ prodamuspy module imported successfully")
-            print(f"📦 Module file: {prodamuspy.__file__ if hasattr(prodamuspy, '__file__') else 'unknown'}")
-            print(f"📦 Module version: {prodamuspy.__version__ if hasattr(prodamuspy, '__version__') else 'unknown'}")
-            print(f"📦 All attributes in prodamuspy module:")
-            for attr in dir(prodamuspy):
-                if not attr.startswith('_'):
-                    print(f"   - {attr}: {type(getattr(prodamuspy, attr))}")
-            print("=" * 80)
-            
-            # Try different class names (actual class is ProdamusPy, not PyProdamus!)
-            if hasattr(prodamuspy, 'ProdamusPy'):
-                ProdamusClass = prodamuspy.ProdamusPy
-                print("✅ Found: prodamuspy.ProdamusPy")
-            elif hasattr(prodamuspy, 'PyProdamus'):
-                ProdamusClass = prodamuspy.PyProdamus
-                print("✅ Found: prodamuspy.PyProdamus")
-            elif hasattr(prodamuspy, 'Prodamus'):
-                ProdamusClass = prodamuspy.Prodamus
-                print("✅ Found: prodamuspy.Prodamus")
-            else:
-                raise AttributeError(f"Cannot find Prodamus class. Available in module: {[a for a in dir(prodamuspy) if not a.startswith('_')]}")
-                
-        except ImportError as e:
-            print(f"❌ Import error: {e}")
-            return {"error": f"prodamuspy import failed: {e}"}, 500
-        except AttributeError as e:
-            print(f"❌ Attribute error: {e}")
-            return {"error": str(e)}, 500
-        
+        from payments.hmac_verifier import Hmac
         from handlers.payment_handlers import handle_prodamus_payment
+        
+        print("=" * 80)
+        print("✅ Using custom HMAC verifier (no external libraries)")
+        print("=" * 80)
         
         print("=" * 80)
         print("🔔 ProDAMUS WEBHOOK RECEIVED")
@@ -158,13 +128,11 @@ def _prodamus_webhook():
                 print(f"  {header}: {value}")
         
         print("\n" + "=" * 80)
-        print("STEP 0: Initialize prodamuspy library")
+        print("STEP 0: Initialize HMAC verifier")
         print("=" * 80)
         print(f"🔑 Secret key length: {len(PRODAMUS_SECRET_KEY)} chars")
         print(f"🔑 Secret key (first 10 chars): {PRODAMUS_SECRET_KEY[:10]}...")
-        
-        prodamus = ProdamusClass(PRODAMUS_SECRET_KEY)
-        print("✅ prodamuspy initialized successfully")
+        print("✅ HMAC verifier ready (using custom implementation)")
         
         print("\n" + "=" * 80)
         print("STEP 1: Get raw body from webhook")
@@ -206,32 +174,98 @@ def _prodamus_webhook():
             print(f"❌ Encoding error: {e}")
         
         print("\n" + "=" * 80)
-        print("STEP 2: Parse body with prodamus.parse()")
+        print("STEP 2: Parse POST data (like PHP $_POST)")
         print("=" * 80)
-        body_dict = prodamus.parse(raw_body)
+        
+        # Check if POST data is empty (like PHP: empty($_POST))
+        if not request.form:
+            print("❌ ERROR: POST data is empty (like PHP empty(\$_POST))")
+            # Like PHP: http_response_code(400); printf('error: %s', $e->getMessage());
+            return "error: POST data is empty", 400
+        
+        # Parse POST data - use Flask's request.form (equivalent to PHP $_POST)
+        body_dict = request.form.to_dict()
+        
+        if not body_dict:
+            print("❌ ERROR: Parsed POST data is empty")
+            return "error: POST data is empty", 400
+        
+        # Handle PHP-style arrays like products[0][name]
+        # Convert products[0][name]=value to products: {0: {name: value}}
+        def parse_php_arrays(data: dict) -> dict:
+            """
+            Convert PHP array notation to nested dicts.
+            Handles: products[0][name], products[0][price], etc.
+            """
+            result = {}
+            for key, value in data.items():
+                # Skip empty keys
+                if not key:
+                    continue
+                
+                # Check if key contains array notation like products[0][name]
+                if '[' in key and ']' in key:
+                    try:
+                        # Parse products[0][name] -> base='products', indices=['0', 'name']
+                        parts = key.split('[')
+                        if not parts:
+                            result[key] = value
+                            continue
+                        
+                        base_key = parts[0]
+                        if not base_key:
+                            result[key] = value
+                            continue
+                        
+                        # Extract indices: ['0', 'name'] from ['0]', 'name]']
+                        indices = []
+                        for part in parts[1:]:
+                            if ']' in part:
+                                idx = part.rstrip(']')
+                                if idx:  # Only add non-empty indices
+                                    indices.append(idx)
+                            else:
+                                # Malformed, treat as regular key
+                                result[key] = value
+                                break
+                        else:
+                            # Successfully parsed all indices
+                            if not indices:
+                                result[key] = value
+                            else:
+                                # Build nested structure
+                                if base_key not in result:
+                                    result[base_key] = {}
+                                
+                                current = result[base_key]
+                                # Navigate/create nested dicts
+                                for idx in indices[:-1]:
+                                    if not isinstance(current, dict):
+                                        # Conflict: key exists but is not a dict
+                                        current = {}
+                                        break
+                                    if idx not in current:
+                                        current[idx] = {}
+                                    current = current[idx]
+                                
+                                # Set final value
+                                if isinstance(current, dict):
+                                    current[indices[-1]] = value
+                    except Exception as e:
+                        # If parsing fails, treat as regular key
+                        print(f"⚠️  Error parsing PHP array key '{key}': {e}")
+                        result[key] = value
+                else:
+                    # Regular key, no array notation
+                    result[key] = value
+            
+            return result
+        
+        # Parse PHP arrays
+        body_dict = parse_php_arrays(body_dict)
+        
         print(f"✅ Parsed successfully!")
         print(f"📊 Total fields parsed: {len(body_dict)}")
-        
-        # Check if parsing modified anything
-        print(f"\n🔍 PARSING INTEGRITY CHECK:")
-        from urllib.parse import parse_qs, urlencode
-        
-        # Re-encode the parsed dict to see if it matches original
-        try:
-            # Flatten the dict back to query string (without nested arrays for now)
-            flat_dict = {k: str(v) for k, v in body_dict.items() if not isinstance(v, dict)}
-            reconstructed = urlencode(sorted(flat_dict.items()))
-            print(f"📦 Reconstructed (flat) length: {len(reconstructed)} bytes")
-            print(f"📦 Original raw body length: {len(raw_body)} bytes")
-            
-            # Check if raw_body contains all keys from parsed dict
-            print(f"\n🔍 Checking if all parsed keys exist in raw body:")
-            for key in list(body_dict.keys())[:5]:  # Check first 5 keys
-                if not isinstance(body_dict[key], dict):
-                    exists = key in raw_body
-                    print(f"  {key}: {'✅' if exists else '❌'} in raw body")
-        except Exception as e:
-            print(f"⚠️  Could not reconstruct: {e}")
         
         print(f"\n📋 All parsed fields:")
         for key, value in sorted(body_dict.items()):
@@ -250,32 +284,43 @@ def _prodamus_webhook():
         print("\n" + "=" * 80)
         print("STEP 3: Extract and verify signature")
         print("=" * 80)
-        received_sign = request.headers.get("sign", "")
+        
+        # Get signature from header (like PHP: $headers['Sign'])
+        # Try both 'Sign' and 'sign' (case-insensitive)
+        received_sign = request.headers.get("Sign") or request.headers.get("sign", "")
         print(f"🔐 Signature from header: {received_sign}")
         print(f"🔐 Signature length: {len(received_sign)} chars")
         
+        # Check if signature is empty (like PHP: empty($headers['Sign']))
         if not received_sign:
-            print("❌ ERROR: No signature in header!")
-            return {"error": "Missing signature"}, 400
+            print("❌ ERROR: Signature not found in header (like PHP empty(\$headers['Sign']))")
+            return "error: signature not found", 400
+        
+        # Remove 'sign' field if it exists in body (shouldn't be there, but just in case)
+        if 'sign' in body_dict:
+            print(f"⚠️  WARNING: 'sign' field found in body_dict, removing it")
+            del body_dict['sign']
         
         # Try to recreate the signature to see if body was modified
         print(f"\n🔍 SIGNATURE INTEGRITY CHECK:")
         try:
             # Calculate what signature SHOULD be based on our parsed data
-            calculated_sign = prodamus.sign(body_dict)
+            calculated_sign = Hmac.create(body_dict, PRODAMUS_SECRET_KEY)
             print(f"🔐 Calculated signature (from parsed data): {calculated_sign}")
             print(f"🔐 Received signature (from header):        {received_sign}")
-            print(f"🔐 Signatures match: {calculated_sign == received_sign}")
+            print(f"🔐 Signatures match (case-insensitive): {calculated_sign.lower() == received_sign.lower()}")
             
-            if calculated_sign != received_sign:
+            if calculated_sign.lower() != received_sign.lower():
                 print(f"\n⚠️  WARNING: Signatures don't match!")
                 print(f"This suggests either:")
                 print(f"  1. The request body was modified by a proxy/gateway")
                 print(f"  2. The secret key is incorrect")
-                print(f"  3. ProDAMUS is calculating signature differently")
+                print(f"  3. Data parsing is incorrect")
                 
                 # Show first difference
-                for i, (c1, c2) in enumerate(zip(calculated_sign, received_sign)):
+                calc_lower = calculated_sign.lower()
+                recv_lower = received_sign.lower()
+                for i, (c1, c2) in enumerate(zip(calc_lower, recv_lower)):
                     if c1 != c2:
                         print(f"  First difference at position {i}: '{c1}' vs '{c2}'")
                         print(f"  Calculated [...{calculated_sign[max(0,i-10):i+10]}...]")
@@ -283,12 +328,14 @@ def _prodamus_webhook():
                         break
         except Exception as e:
             print(f"⚠️  Could not calculate signature: {e}")
+            import traceback
+            traceback.print_exc()
         
-        print(f"\n🔍 Calling prodamus.verify()...")
+        print(f"\n🔍 Calling Hmac.verify()...")
         print(f"   - body_dict keys: {list(body_dict.keys())}")
         print(f"   - signature: {received_sign[:30]}...")
         
-        is_valid = prodamus.verify(body_dict, received_sign)
+        is_valid = Hmac.verify(body_dict, PRODAMUS_SECRET_KEY, received_sign)
         
         print(f"\n🔍 Verification result: {is_valid}")
         
@@ -299,34 +346,16 @@ def _prodamus_webhook():
             for key, value in list(body_dict.items())[:5]:
                 print(f"   {key}: {value} (type: {type(value).__name__})")
             
-            # Check if there's a sign field in the body (shouldn't be)
-            if 'sign' in body_dict:
-                print(f"⚠️  WARNING: 'sign' field found in body_dict!")
-                print(f"   This should not be included in verification")
-            
-            # Try verification with Flask's parsed data
-            print(f"\n🔍 Trying verification with Flask's request.form:")
+            # Show JSON representation that would be used for HMAC
             try:
-                is_valid_flask = prodamus.verify(flask_parsed, received_sign)
-                print(f"   Verification with Flask data: {is_valid_flask}")
-                if is_valid_flask and not is_valid:
-                    print(f"   ✅ Flask data verified! Issue is with prodamus.parse()")
+                import json
+                # Sort and convert to JSON like Hmac.create() does
+                sorted_data = dict(sorted(body_dict.items()))
+                json_repr = json.dumps(sorted_data, ensure_ascii=False, separators=(',', ':'))
+                print(f"\n📦 JSON representation (first 200 chars):")
+                print(f"   {json_repr[:200]}...")
             except Exception as e:
-                print(f"   ❌ Error: {e}")
-            
-            # Try parsing raw body again with different encoding
-            print(f"\n🔍 Trying different parsing methods:")
-            from urllib.parse import parse_qsl
-            try:
-                # Method 1: parse_qsl (standard library)
-                parsed_qsl = dict(parse_qsl(raw_body, keep_blank_values=True))
-                print(f"   parse_qsl result keys: {list(parsed_qsl.keys())[:5]}")
-                is_valid_qsl = prodamus.verify(parsed_qsl, received_sign)
-                print(f"   Verification with parse_qsl: {is_valid_qsl}")
-                if is_valid_qsl:
-                    print(f"   ✅ parse_qsl worked! Issue is with prodamus.parse()")
-            except Exception as e:
-                print(f"   ❌ parse_qsl error: {e}")
+                print(f"   Could not create JSON representation: {e}")
         
         if not is_valid:
             print("\n" + "=" * 80)
@@ -338,7 +367,8 @@ def _prodamus_webhook():
             print(f"📦 Sum: {body_dict.get('sum')}")
             print(f"📦 Email: {body_dict.get('customer_email')}")
             print("=" * 80)
-            return {"error": "Invalid signature"}, 403
+            # Like PHP: http_response_code(400); printf('error: %s', 'signature incorrect');
+            return "error: signature incorrect", 400
         
         print("\n✅ SIGNATURE VERIFIED SUCCESSFULLY!")
         
@@ -383,7 +413,8 @@ def _prodamus_webhook():
             
             print("\n✅ Payment processed successfully!")
             print("=" * 80)
-            return {"status": "ok", "order_id": order_id}, 200
+            # Like PHP: http_response_code(200); echo 'success';
+            return "success", 200
         else:
             print("\n" + "=" * 80)
             print(f"❌ PAYMENT NOT SUCCESSFUL: {payment_status}")
@@ -395,7 +426,8 @@ def _prodamus_webhook():
             handle_prodamus_payment(bot, body_dict)
             
             print("=" * 80)
-            return {"status": "ok", "payment_status": payment_status}, 200
+            # Still return success to ProDAMUS (we processed the webhook)
+            return "success", 200
         
     except Exception as e:
         print("=" * 60)
@@ -403,7 +435,8 @@ def _prodamus_webhook():
         import traceback
         traceback.print_exc()
         print("=" * 60)
-        return {"error": str(e)}, 500
+        # Like PHP: http_response_code($e->getCode() ? $e->getCode() : 400);
+        return f"error: {str(e)}", 400
 
 
 # Configure Telegram webhook at import time when running under WSGI

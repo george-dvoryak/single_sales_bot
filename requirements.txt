@@ -2,7 +2,6 @@ pyTelegramBotAPI==4.16.1
 Flask==3.0.0
 requests>=2.31.0
 python-dotenv>=1.0.0
-prodamuspy>=0.0.3
 
 # Optional: for Google Sheets API (if GOOGLE_SHEETS_USE_API=True)
 # Uncomment if needed:
