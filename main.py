@@ -184,11 +184,15 @@ def _prodamus_webhook():
             return "error: POST data is empty", 400
         
         # Parse POST data - use Flask's request.form (equivalent to PHP $_POST)
-        body_dict = request.form.to_dict()
+        # IMPORTANT: Keep flat structure for signature verification (ProDAMUS signs flat keys like products[0][name])
+        body_dict_flat = request.form.to_dict()
         
-        if not body_dict:
+        if not body_dict_flat:
             print("❌ ERROR: Parsed POST data is empty")
             return "error: POST data is empty", 400
+        
+        print(f"📦 Flat structure (for signature verification): {len(body_dict_flat)} fields")
+        print(f"📦 Sample flat keys: {list(body_dict_flat.keys())[:10]}")
         
         # Handle PHP-style arrays like products[0][name]
         # Convert products[0][name]=value to products: {0: {name: value}}
@@ -261,28 +265,10 @@ def _prodamus_webhook():
             
             return result
         
-        # Parse PHP arrays
-        body_dict = parse_php_arrays(body_dict)
-        
-        print(f"✅ Parsed successfully!")
-        print(f"📊 Total fields parsed: {len(body_dict)}")
-        
-        print(f"\n📋 All parsed fields:")
-        for key, value in sorted(body_dict.items()):
-            if isinstance(value, dict):
-                print(f"  {key}: (nested dict with {len(value)} items)")
-                for nested_key, nested_value in value.items():
-                    if isinstance(nested_value, dict):
-                        print(f"    {nested_key}: (nested dict with {len(nested_value)} items)")
-                        for n2_key, n2_value in list(nested_value.items())[:3]:
-                            print(f"      {n2_key}: {n2_value}")
-                    else:
-                        print(f"    {nested_key}: {nested_value}")
-            else:
-                print(f"  {key}: {value}")
-        
         print("\n" + "=" * 80)
-        print("STEP 3: Extract and verify signature")
+        print("STEP 3: Extract and verify signature (using FLAT structure)")
+        print("=" * 80)
+        print("⚠️  IMPORTANT: ProDAMUS signs the FLAT structure (products[0][name]), not nested!")
         print("=" * 80)
         
         # Get signature from header (like PHP: $headers['Sign'])
@@ -297,15 +283,22 @@ def _prodamus_webhook():
             return "error: signature not found", 400
         
         # Remove 'sign' field if it exists in body (shouldn't be there, but just in case)
-        if 'sign' in body_dict:
+        # Use FLAT structure for signature verification
+        body_dict_for_verification = body_dict_flat.copy()
+        if 'sign' in body_dict_for_verification:
             print(f"⚠️  WARNING: 'sign' field found in body_dict, removing it")
-            del body_dict['sign']
+            del body_dict_for_verification['sign']
+        
+        print(f"\n📦 Data for signature verification (FLAT structure):")
+        print(f"   Total fields: {len(body_dict_for_verification)}")
+        print(f"   Sample keys: {list(body_dict_for_verification.keys())[:10]}")
         
         # Try to recreate the signature to see if body was modified
         print(f"\n🔍 SIGNATURE INTEGRITY CHECK:")
         try:
-            # Calculate what signature SHOULD be based on our parsed data
-            calculated_sign = HmacPy.create(body_dict, PRODAMUS_SECRET_KEY)
+            # Calculate what signature SHOULD be based on FLAT data (like PHP $_POST)
+            print(f"   Using FLAT structure for signature calculation...")
+            calculated_sign = HmacPy.create(body_dict_for_verification, PRODAMUS_SECRET_KEY)
             print(f"🔐 Calculated signature (from parsed data): {calculated_sign}")
             print(f"🔐 Received signature (from header):        {received_sign}")
             
@@ -336,53 +329,73 @@ def _prodamus_webhook():
             import traceback
             traceback.print_exc()
         
-        print(f"\n🔍 Calling HmacPy.verify()...")
-        print(f"   - body_dict type: {type(body_dict).__name__}")
-        print(f"   - body_dict keys: {list(body_dict.keys())[:10]}...")
+        print(f"\n🔍 Calling HmacPy.verify() with FLAT structure...")
+        print(f"   - body_dict_for_verification type: {type(body_dict_for_verification).__name__}")
+        print(f"   - body_dict_for_verification keys: {list(body_dict_for_verification.keys())[:10]}...")
         print(f"   - signature: {received_sign[:30]}...")
         
-        is_valid = HmacPy.verify(body_dict, PRODAMUS_SECRET_KEY, received_sign)
+        is_valid = HmacPy.verify(body_dict_for_verification, PRODAMUS_SECRET_KEY, received_sign)
         
         print(f"\n🔍 Verification result: {is_valid}")
         
         # Additional debug if verification failed
         if not is_valid:
             print(f"\n🔍 DEBUGGING FAILED VERIFICATION:")
-            print(f"📦 Body dict sample (first 5 items):")
-            for key, value in list(body_dict.items())[:5]:
+            print(f"📦 Flat body dict sample (first 10 items):")
+            for key, value in list(body_dict_for_verification.items())[:10]:
                 print(f"   {key}: {value} (type: {type(value).__name__})")
             
-            # Try with raw body as JSON string
-            print(f"\n🔍 Trying with raw body as JSON string...")
+            # Show what the JSON would look like
+            print(f"\n🔍 Showing JSON representation that would be signed...")
             try:
-                # Convert body_dict to JSON and try verifying that
                 import json
-                json_str = json.dumps(body_dict, ensure_ascii=False)
+                # Sort and convert like HmacPy does
+                sorted_data = dict(sorted(body_dict_for_verification.items()))
+                # Convert all to strings
+                str_data = {k: str(v) for k, v in sorted_data.items()}
+                json_str = json.dumps(str_data, ensure_ascii=False, separators=(',', ':'))
                 print(f"   JSON string length: {len(json_str)}")
-                is_valid_json = HmacPy.verify(json_str, PRODAMUS_SECRET_KEY, received_sign)
-                print(f"   Verification with JSON string: {is_valid_json}")
-                if is_valid_json:
-                    print(f"   ✅ JSON string verification worked!")
+                print(f"   JSON preview (first 300 chars): {json_str[:300]}...")
+                if len(json_str) > 300:
+                    print(f"   JSON preview (last 100 chars): ...{json_str[-100:]}")
             except Exception as e:
-                print(f"   ❌ Error: {e}")
+                print(f"   ❌ Error creating JSON: {e}")
         
         if not is_valid:
             print("\n" + "=" * 80)
             print("❌ SIGNATURE VERIFICATION FAILED")
             print("=" * 80)
             print("⚠️  Webhook REJECTED due to invalid signature")
-            print(f"📦 Order ID: {body_dict.get('order_id')}")
-            print(f"📦 Payment status: {body_dict.get('payment_status')}")
-            print(f"📦 Sum: {body_dict.get('sum')}")
-            print(f"📦 Email: {body_dict.get('customer_email')}")
+            print(f"📦 Order ID: {body_dict_for_verification.get('order_id', 'unknown')}")
+            print(f"📦 Payment status: {body_dict_for_verification.get('payment_status', 'unknown')}")
+            print(f"📦 Sum: {body_dict_for_verification.get('sum', 'unknown')}")
+            print(f"📦 Email: {body_dict_for_verification.get('customer_email', 'unknown')}")
             print("=" * 80)
             # Like PHP: http_response_code(400); printf('error: %s', 'signature incorrect');
             return "error: signature incorrect", 400
         
         print("\n✅ SIGNATURE VERIFIED SUCCESSFULLY!")
         
+        # Now parse PHP arrays for use in payment handler (nested structure)
         print("\n" + "=" * 80)
-        print("STEP 4: Check payment status and process")
+        print("STEP 4: Parse PHP arrays for payment processing")
+        print("=" * 80)
+        print("⚠️  Now converting flat structure to nested for easier processing...")
+        
+        body_dict = parse_php_arrays(body_dict_flat)
+        
+        print(f"✅ Parsed PHP arrays successfully!")
+        print(f"📊 Total fields after parsing: {len(body_dict)}")
+        
+        print(f"\n📋 Nested structure sample:")
+        for key, value in list(body_dict.items())[:5]:
+            if isinstance(value, dict):
+                print(f"  {key}: (nested dict with {len(value)} items)")
+            else:
+                print(f"  {key}: {value}")
+        
+        print("\n" + "=" * 80)
+        print("STEP 5: Check payment status and process")
         print("=" * 80)
         
         # Extract all important fields
