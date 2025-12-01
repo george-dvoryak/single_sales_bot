@@ -87,43 +87,81 @@ def _prodamus_webhook():
         # Log incoming webhook for debugging
         print("=" * 60)
         print("ProDAMUS webhook received!")
+        print(f"Method: {request.method}")
+        print(f"Content-Type: {request.content_type}")
         print(f"Headers: {dict(request.headers)}")
-        print(f"Form data: {request.form.to_dict()}")
+        
+        # Get raw body for logging
+        raw_body = request.get_data(as_text=True)
+        print(f"Raw body: {raw_body[:500]}...")  # First 500 chars
+        
+        # Parse form data (ProDAMUS sends application/x-www-form-urlencoded)
+        form_data = request.form.to_dict()
+        print(f"Parsed form data keys: {list(form_data.keys())}")
+        print(f"Parsed form data: {form_data}")
         print("=" * 60)
         
         # Get signature from header
         signature = request.headers.get("sign", "")
-        print(f"Signature from header: {signature}")
+        print(f"Signature from header: '{signature}'")
         
-        # Get form data
-        raw_body = request.get_data(as_text=True)
+        # Check if we have data
+        if not form_data:
+            print("ERROR: No form data received!")
+            print(f"Trying to parse raw body as form data...")
+            from urllib.parse import parse_qs
+            try:
+                parsed = parse_qs(raw_body)
+                # parse_qs returns lists, convert to single values
+                form_data = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in parsed.items()}
+                print(f"Parsed from raw body: {form_data}")
+            except Exception as e:
+                print(f"Failed to parse raw body: {e}")
+                return "ERROR: No data", 400
         
         # Verify signature
         is_valid = verify_webhook_signature(form_data, signature)
         print(f"Signature valid: {is_valid}")
         
         if not is_valid:
-            print("ProDAMUS webhook: Invalid signature - REJECTED")
-            # Still log the data for debugging
+            print("=" * 60)
+            print("❌ ProDAMUS webhook: Invalid signature - REJECTED")
             print(f"Order ID: {form_data.get('order_id')}")
             print(f"Payment status: {form_data.get('payment_status')}")
-            abort(403)
+            print(f"Customer email: {form_data.get('customer_email')}")
+            print(f"Sum: {form_data.get('sum')}")
+            print("=" * 60)
+            
+            # Return error response instead of abort
+            return {
+                "error": "Invalid signature",
+                "message": "Webhook signature verification failed"
+            }, 403
         
         # Parse webhook data
         webhook_data = parse_webhook_data(form_data)
         
-        print(f"ProDAMUS webhook ACCEPTED: order_id={webhook_data.get('order_id')}, status={webhook_data.get('payment_status')}")
+        print("=" * 60)
+        print(f"✅ ProDAMUS webhook ACCEPTED!")
+        print(f"Order ID: {webhook_data.get('order_id')}")
+        print(f"Payment status: {webhook_data.get('payment_status')}")
+        print(f"Sum: {webhook_data.get('sum')}")
+        print(f"Customer email: {webhook_data.get('customer_email')}")
+        print("=" * 60)
         
         # Process payment
         handle_prodamus_payment(bot, webhook_data)
         
-        return "OK", 200
+        print("✅ Payment processed successfully")
+        return {"status": "ok", "message": "Webhook processed"}, 200
         
     except Exception as e:
-        print(f"Error processing ProDAMUS webhook: {e}")
+        print("=" * 60)
+        print(f"❌ Error processing ProDAMUS webhook: {e}")
         import traceback
         traceback.print_exc()
-        return "ERROR", 500
+        print("=" * 60)
+        return {"error": str(e), "message": "Internal server error"}, 500
 
 
 # Configure Telegram webhook at import time when running under WSGI
