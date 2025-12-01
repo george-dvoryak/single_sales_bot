@@ -82,11 +82,11 @@ def _prodamus_webhook():
         abort(404)
     
     try:
-        from payments.hmac_verifier import Hmac
+        from payments.hmac_verifier import HmacPy
         from handlers.payment_handlers import handle_prodamus_payment
         
         print("=" * 80)
-        print("✅ Using custom HMAC verifier (no external libraries)")
+        print("✅ Using HmacPy (exact PHP match implementation)")
         print("=" * 80)
         
         print("=" * 80)
@@ -128,11 +128,11 @@ def _prodamus_webhook():
                 print(f"  {header}: {value}")
         
         print("\n" + "=" * 80)
-        print("STEP 0: Initialize HMAC verifier")
+        print("STEP 0: Initialize HmacPy verifier")
         print("=" * 80)
         print(f"🔑 Secret key length: {len(PRODAMUS_SECRET_KEY)} chars")
         print(f"🔑 Secret key (first 10 chars): {PRODAMUS_SECRET_KEY[:10]}...")
-        print("✅ HMAC verifier ready (using custom implementation)")
+        print("✅ HmacPy ready (exact PHP match)")
         
         print("\n" + "=" * 80)
         print("STEP 1: Get raw body from webhook")
@@ -305,37 +305,43 @@ def _prodamus_webhook():
         print(f"\n🔍 SIGNATURE INTEGRITY CHECK:")
         try:
             # Calculate what signature SHOULD be based on our parsed data
-            calculated_sign = Hmac.create(body_dict, PRODAMUS_SECRET_KEY)
+            calculated_sign = HmacPy.create(body_dict, PRODAMUS_SECRET_KEY)
             print(f"🔐 Calculated signature (from parsed data): {calculated_sign}")
             print(f"🔐 Received signature (from header):        {received_sign}")
-            print(f"🔐 Signatures match (case-insensitive): {calculated_sign.lower() == received_sign.lower()}")
             
-            if calculated_sign.lower() != received_sign.lower():
-                print(f"\n⚠️  WARNING: Signatures don't match!")
-                print(f"This suggests either:")
-                print(f"  1. The request body was modified by a proxy/gateway")
-                print(f"  2. The secret key is incorrect")
-                print(f"  3. Data parsing is incorrect")
+            if calculated_sign:
+                print(f"🔐 Signatures match (case-insensitive): {calculated_sign.lower() == received_sign.lower()}")
                 
-                # Show first difference
-                calc_lower = calculated_sign.lower()
-                recv_lower = received_sign.lower()
-                for i, (c1, c2) in enumerate(zip(calc_lower, recv_lower)):
-                    if c1 != c2:
-                        print(f"  First difference at position {i}: '{c1}' vs '{c2}'")
-                        print(f"  Calculated [...{calculated_sign[max(0,i-10):i+10]}...]")
-                        print(f"  Received   [...{received_sign[max(0,i-10):i+10]}...]")
-                        break
+                if calculated_sign.lower() != received_sign.lower():
+                    print(f"\n⚠️  WARNING: Signatures don't match!")
+                    print(f"This suggests either:")
+                    print(f"  1. The request body was modified by a proxy/gateway")
+                    print(f"  2. The secret key is incorrect")
+                    print(f"  3. Data parsing is incorrect")
+                    
+                    # Show first difference
+                    calc_lower = calculated_sign.lower()
+                    recv_lower = received_sign.lower()
+                    min_len = min(len(calc_lower), len(recv_lower))
+                    for i in range(min_len):
+                        if calc_lower[i] != recv_lower[i]:
+                            print(f"  First difference at position {i}: '{calc_lower[i]}' vs '{recv_lower[i]}'")
+                            print(f"  Calculated [...{calculated_sign[max(0,i-10):i+10]}...]")
+                            print(f"  Received   [...{received_sign[max(0,i-10):i+10]}...]")
+                            break
+            else:
+                print(f"❌ Failed to calculate signature!")
         except Exception as e:
             print(f"⚠️  Could not calculate signature: {e}")
             import traceback
             traceback.print_exc()
         
-        print(f"\n🔍 Calling Hmac.verify()...")
-        print(f"   - body_dict keys: {list(body_dict.keys())}")
+        print(f"\n🔍 Calling HmacPy.verify()...")
+        print(f"   - body_dict type: {type(body_dict).__name__}")
+        print(f"   - body_dict keys: {list(body_dict.keys())[:10]}...")
         print(f"   - signature: {received_sign[:30]}...")
         
-        is_valid = Hmac.verify(body_dict, PRODAMUS_SECRET_KEY, received_sign)
+        is_valid = HmacPy.verify(body_dict, PRODAMUS_SECRET_KEY, received_sign)
         
         print(f"\n🔍 Verification result: {is_valid}")
         
@@ -346,16 +352,19 @@ def _prodamus_webhook():
             for key, value in list(body_dict.items())[:5]:
                 print(f"   {key}: {value} (type: {type(value).__name__})")
             
-            # Show JSON representation that would be used for HMAC
+            # Try with raw body as JSON string
+            print(f"\n🔍 Trying with raw body as JSON string...")
             try:
+                # Convert body_dict to JSON and try verifying that
                 import json
-                # Sort and convert to JSON like Hmac.create() does
-                sorted_data = dict(sorted(body_dict.items()))
-                json_repr = json.dumps(sorted_data, ensure_ascii=False, separators=(',', ':'))
-                print(f"\n📦 JSON representation (first 200 chars):")
-                print(f"   {json_repr[:200]}...")
+                json_str = json.dumps(body_dict, ensure_ascii=False)
+                print(f"   JSON string length: {len(json_str)}")
+                is_valid_json = HmacPy.verify(json_str, PRODAMUS_SECRET_KEY, received_sign)
+                print(f"   Verification with JSON string: {is_valid_json}")
+                if is_valid_json:
+                    print(f"   ✅ JSON string verification worked!")
             except Exception as e:
-                print(f"   Could not create JSON representation: {e}")
+                print(f"   ❌ Error: {e}")
         
         if not is_valid:
             print("\n" + "=" * 80)
