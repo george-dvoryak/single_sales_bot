@@ -7,6 +7,7 @@ Main entry point for the bot (polling or webhook mode)
 import time
 import telebot
 from flask import Flask, request, abort
+from typing import Dict, Any
 
 from config import (
     TELEGRAM_BOT_TOKEN, 
@@ -20,7 +21,8 @@ from config import (
 )
 
 # Import handlers
-from handlers import basic_handlers, catalog_handlers, payment_handlers, admin_handlers, prodamus_hmac
+from handlers import basic_handlers, catalog_handlers, payment_handlers, admin_handlers
+from handlers.prodamus_hmac import ProdamusHmac
 from utils.channel import check_course_channels
 from google_sheets import get_courses_data
 
