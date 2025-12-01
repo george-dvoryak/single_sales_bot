@@ -5,6 +5,7 @@ Main entry point for the bot (polling or webhook mode)
 """
 
 import time
+import traceback
 import telebot
 from flask import Flask, request, abort
 from typing import Dict, Any
@@ -46,6 +47,12 @@ application = Flask(__name__)
 def _health():
     """Health check endpoint"""
     return "OK", 200
+
+
+@application.get("/prodamus_webhook")
+def _prodamus_webhook_get():
+    """Test endpoint for Prodamus webhook (GET request)"""
+    return "Prodamus webhook endpoint is active. Use POST method.", 200
 
 
 @application.get("/diag")
@@ -98,7 +105,12 @@ def _prodamus_webhook():
         print("[prodamus_webhook] Webhook received")
         print(f"[prodamus_webhook] Method: {request.method}")
         print(f"[prodamus_webhook] Content-Type: {request.content_type}")
-        print(f"[prodamus_webhook] Headers: {dict(request.headers)}")
+        # Safely log headers
+        try:
+            headers_dict = {k: v for k, v in request.headers}
+            print(f"[prodamus_webhook] Headers: {headers_dict}")
+        except Exception as e:
+            print(f"[prodamus_webhook] Could not log headers: {e}")
         
         if not PRODAMUS_SECRET_KEY or PRODAMUS_SECRET_KEY == "CHANGE_ME":
             print("[prodamus_webhook] ERROR: secret key not configured")
@@ -150,13 +162,21 @@ def _prodamus_webhook():
                 data = data_dict
                 print(f"[prodamus_webhook] Parsed form data: {len(data)} fields")
 
+        # Проверяем, что data не пустой и является словарём
+        if not data:
+            print("[prodamus_webhook] ERROR: data is empty after parsing")
+            return "error: POST is empty", 400
+        
+        if not isinstance(data, dict):
+            print(f"[prodamus_webhook] ERROR: data is not a dict, got {type(data)}")
+            return "error: invalid data format", 400
+
         # Теперь data — либо dict/list из JSON, либо dict как $_POST
         try:
             is_valid = ProdamusHmac.verify(data, PRODAMUS_SECRET_KEY, sign)
         except Exception as e:
             # На всякий случай, чтобы проще дебажить
             print(f"[prodamus_webhook] verify error: {e}")
-            import traceback
             traceback.print_exc()
             return "error: internal verify error", 500
 
@@ -179,7 +199,6 @@ def _prodamus_webhook():
         except Exception as e:
             # Логируем ошибку и возвращаем 500, чтобы Prodamus повторил запрос
             print(f"[prodamus_webhook] ERROR processing payment: {e}")
-            import traceback
             traceback.print_exc()
             # Возвращаем 500, чтобы Prodamus повторил запрос позже
             return "error: payment processing failed", 500
@@ -187,26 +206,31 @@ def _prodamus_webhook():
     except Exception as e:
         # Общий обработчик ошибок на случай непредвиденных исключений
         print(f"[prodamus_webhook] FATAL ERROR: {e}")
-        import traceback
         traceback.print_exc()
         # Возвращаем 500, чтобы Prodamus повторил запрос позже
         return "error: internal server error", 500
 
 
 # Configure Telegram webhook at import time when running under WSGI
-if USE_WEBHOOK and WEBHOOK_URL and not WEBHOOK_URL.startswith("https://<"):
-    try:
-        bot.remove_webhook()
-        time.sleep(0.5)
-        bot.set_webhook(
-            url=WEBHOOK_URL,
-            secret_token=WEBHOOK_SECRET_TOKEN,
-            drop_pending_updates=True,
-            allowed_updates=["message", "callback_query", "pre_checkout_query"]
-        )
-        print(f"Webhook set to {WEBHOOK_URL}")
-    except Exception as e:
-        print("Failed to set webhook:", e)
+# Wrap in try-except to prevent WSGI import failures
+try:
+    if USE_WEBHOOK and WEBHOOK_URL and not WEBHOOK_URL.startswith("https://<"):
+        try:
+            bot.remove_webhook()
+            time.sleep(0.5)
+            bot.set_webhook(
+                url=WEBHOOK_URL,
+                secret_token=WEBHOOK_SECRET_TOKEN,
+                drop_pending_updates=True,
+                allowed_updates=["message", "callback_query", "pre_checkout_query"]
+            )
+            print(f"Webhook set to {WEBHOOK_URL}")
+        except Exception as e:
+            print(f"Failed to set webhook: {e}")
+            traceback.print_exc()
+except Exception as e:
+    print(f"Error in webhook configuration block: {e}")
+    traceback.print_exc()
 
 
 if __name__ == "__main__":
