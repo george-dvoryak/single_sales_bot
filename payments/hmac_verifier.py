@@ -27,25 +27,59 @@ class HmacPy:
         Returns:
             HMAC signature as hex string, or None on error
         """
+        print("=" * 80)
+        print("🔐 HmacPy.create() - Starting signature creation")
+        print("=" * 80)
+        print(f"📦 Input data type: {type(data).__name__}")
+        print(f"🔑 Key length: {len(key)} chars")
+        print(f"🔧 Algorithm: {algo}")
+        
         digestmod = HmacPy._get_digestmod(algo)
         if digestmod is None:
+            print(f"❌ Algorithm '{algo}' not available")
             return None  # как false в PHP
 
         # (array)$data — приводим к "массиву" (dict/list).
+        print(f"\n📋 Step 1: Converting to array/dict (PHP array cast)")
         array_data = HmacPy._php_array_cast(data)
+        print(f"   Result type: {type(array_data).__name__}")
+        if isinstance(array_data, dict):
+            print(f"   Keys count: {len(array_data)}")
+            print(f"   Keys: {list(array_data.keys())[:10]}...")
 
         # array_walk_recursive + strval
+        print(f"\n📋 Step 2: Converting all values to strings (strval)")
         array_data = HmacPy._to_str_values(array_data)
+        print(f"   ✅ All values converted to strings")
 
         # рекурсивная сортировка по ключам (ksort + _sort)
+        print(f"\n📋 Step 3: Recursively sorting by keys (ksort)")
         array_data = HmacPy._sort_recursive(array_data)
+        if isinstance(array_data, dict):
+            sorted_keys = list(array_data.keys())
+            print(f"   Sorted keys: {sorted_keys[:10]}...")
 
         # json_encode(..., JSON_UNESCAPED_UNICODE)
+        print(f"\n📋 Step 4: JSON encoding (JSON_UNESCAPED_UNICODE)")
         json_str = HmacPy._php_json_encode_unicode(array_data)
+        print(f"   JSON string length: {len(json_str)} chars")
+        print(f"   JSON preview (first 200 chars): {json_str[:200]}...")
+        if len(json_str) > 200:
+            print(f"   JSON preview (last 100 chars): ...{json_str[-100:]}")
 
         # hash_hmac($algo, $data, $key)
+        print(f"\n📋 Step 5: Calculating HMAC")
+        print(f"   Key bytes: {len(key.encode('utf-8'))} bytes")
+        print(f"   Data bytes: {len(json_str.encode('utf-8'))} bytes")
         mac = hmac.new(key.encode("utf-8"), json_str.encode("utf-8"), digestmod)
-        return mac.hexdigest()  # hex, как в PHP (строчные буквы)
+        signature = mac.hexdigest()  # hex, как в PHP (строчные буквы)
+        
+        print(f"\n✅ Signature created successfully!")
+        print(f"   Signature: {signature}")
+        print(f"   Signature length: {len(signature)} chars")
+        print("=" * 80)
+        
+        return signature
 
     @staticmethod
     def verify(data: Any, key: str, sign: str, algo: str = "sha256") -> bool:
@@ -61,12 +95,48 @@ class HmacPy:
         Returns:
             True if signature is valid, False otherwise
         """
+        print("=" * 80)
+        print("🔍 HmacPy.verify() - Starting signature verification")
+        print("=" * 80)
+        print(f"📦 Data type: {type(data).__name__}")
+        print(f"🔑 Key length: {len(key)} chars")
+        print(f"🔐 Received signature: {sign}")
+        print(f"🔐 Received signature length: {len(sign)} chars")
+        print(f"🔧 Algorithm: {algo}")
+        
         calc = HmacPy.create(data, key, algo)
         if not calc:
+            print(f"\n❌ Failed to create signature - verification failed")
+            print("=" * 80)
             return False
 
         # приведение к нижнему регистру + безопасное сравнение
-        return hmac.compare_digest(calc.lower(), str(sign).lower())
+        calc_lower = calc.lower()
+        sign_lower = str(sign).lower()
+        
+        print(f"\n📋 Step 6: Comparing signatures (case-insensitive)")
+        print(f"   Calculated (lowercase): {calc_lower}")
+        print(f"   Received (lowercase):    {sign_lower}")
+        
+        is_valid = hmac.compare_digest(calc_lower, sign_lower)
+        
+        if is_valid:
+            print(f"\n✅ SIGNATURE VERIFICATION SUCCESSFUL!")
+        else:
+            print(f"\n❌ SIGNATURE VERIFICATION FAILED!")
+            # Show first difference
+            min_len = min(len(calc_lower), len(sign_lower))
+            for i in range(min_len):
+                if calc_lower[i] != sign_lower[i]:
+                    print(f"   First difference at position {i}: '{calc_lower[i]}' vs '{sign_lower[i]}'")
+                    print(f"   Calculated: ...{calc[max(0,i-10):i+10]}...")
+                    print(f"   Received:   ...{sign[max(0,i-10):i+10]}...")
+                    break
+            if len(calc_lower) != len(sign_lower):
+                print(f"   Length mismatch: calculated={len(calc_lower)}, received={len(sign_lower)}")
+        
+        print("=" * 80)
+        return is_valid
 
     # ---------- ВНУТРЕННИЕ ХЕЛПЕРЫ (АНАЛОГИ PHP) ----------
 
