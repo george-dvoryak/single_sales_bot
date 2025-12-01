@@ -85,51 +85,142 @@ def _prodamus_webhook():
         import prodamuspy
         from handlers.payment_handlers import handle_prodamus_payment
         
-        print("=" * 60)
-        print("ProDAMUS webhook received!")
+        print("=" * 80)
+        print("🔔 ProDAMUS WEBHOOK RECEIVED")
+        print("=" * 80)
+        print(f"⏰ Time: {request.environ.get('REQUEST_TIME', 'unknown')}")
+        print(f"🌐 Remote IP: {request.remote_addr}")
+        print(f"📋 Method: {request.method}")
+        print(f"📝 Content-Type: {request.content_type}")
+        print(f"📏 Content-Length: {request.content_length}")
         
-        # Step 0: Init prodamuspy with secret key from .env
+        # Log all headers
+        print("\n📨 HEADERS:")
+        for header, value in request.headers:
+            if header.lower() == 'sign':
+                print(f"  {header}: {value[:30]}... (truncated)")
+            else:
+                print(f"  {header}: {value}")
+        
+        print("\n" + "=" * 80)
+        print("STEP 0: Initialize prodamuspy library")
+        print("=" * 80)
+        print(f"🔑 Secret key length: {len(PRODAMUS_SECRET_KEY)} chars")
+        print(f"🔑 Secret key (first 10 chars): {PRODAMUS_SECRET_KEY[:10]}...")
+        
         prodamus = prodamuspy.PyProdamus(PRODAMUS_SECRET_KEY)
-        print(f"✅ Initialized prodamuspy with secret key")
+        print("✅ prodamuspy initialized successfully")
         
-        # Step 1: Get raw body from webhook
+        print("\n" + "=" * 80)
+        print("STEP 1: Get raw body from webhook")
+        print("=" * 80)
         raw_body = request.get_data(as_text=True)
-        print(f"Raw body: {raw_body[:200]}...")
+        print(f"📦 Raw body length: {len(raw_body)} bytes")
+        print(f"📦 Raw body (first 300 chars):\n{raw_body[:300]}...")
+        if len(raw_body) > 300:
+            print(f"📦 Raw body (last 100 chars):\n...{raw_body[-100:]}")
         
-        # Step 2: Parse body using prodamus.parse()
+        print("\n" + "=" * 80)
+        print("STEP 2: Parse body with prodamus.parse()")
+        print("=" * 80)
         body_dict = prodamus.parse(raw_body)
-        print(f"✅ Parsed body: {len(body_dict)} fields")
-        print(f"Payment status: {body_dict.get('payment_status')}")
-        print(f"Order ID: {body_dict.get('order_id')}")
+        print(f"✅ Parsed successfully!")
+        print(f"📊 Total fields parsed: {len(body_dict)}")
+        print(f"\n📋 All parsed fields:")
+        for key, value in sorted(body_dict.items()):
+            if isinstance(value, dict):
+                print(f"  {key}: (nested dict with {len(value)} items)")
+                for nested_key, nested_value in value.items():
+                    print(f"    {nested_key}: {nested_value}")
+            else:
+                print(f"  {key}: {value}")
         
-        # Step 3: Get signature from header and verify
+        print("\n" + "=" * 80)
+        print("STEP 3: Extract and verify signature")
+        print("=" * 80)
         received_sign = request.headers.get("sign", "")
-        print(f"Received signature: {received_sign[:20]}...")
+        print(f"🔐 Signature from header: {received_sign}")
+        print(f"🔐 Signature length: {len(received_sign)} chars")
+        
+        if not received_sign:
+            print("❌ ERROR: No signature in header!")
+            return {"error": "Missing signature"}, 400
+        
+        print(f"\n🔍 Calling prodamus.verify()...")
+        print(f"   - body_dict keys: {list(body_dict.keys())}")
+        print(f"   - signature: {received_sign[:30]}...")
         
         is_valid = prodamus.verify(body_dict, received_sign)
-        print(f"Signature valid: {is_valid}")
+        
+        print(f"\n🔍 Verification result: {is_valid}")
         
         if not is_valid:
-            print("❌ Invalid signature - REJECTED")
-            print("=" * 60)
+            print("\n" + "=" * 80)
+            print("❌ SIGNATURE VERIFICATION FAILED")
+            print("=" * 80)
+            print("⚠️  Webhook REJECTED due to invalid signature")
+            print(f"📦 Order ID: {body_dict.get('order_id')}")
+            print(f"📦 Payment status: {body_dict.get('payment_status')}")
+            print(f"📦 Sum: {body_dict.get('sum')}")
+            print(f"📦 Email: {body_dict.get('customer_email')}")
+            print("=" * 80)
             return {"error": "Invalid signature"}, 403
         
-        print("✅ Signature verified!")
+        print("\n✅ SIGNATURE VERIFIED SUCCESSFULLY!")
         
-        # Step 4: Check payment status and grant access if success
+        print("\n" + "=" * 80)
+        print("STEP 4: Check payment status and process")
+        print("=" * 80)
+        
+        # Extract all important fields
+        order_id = body_dict.get("order_id", "")
         payment_status = body_dict.get("payment_status", "")
-        print(f"Payment status: {payment_status}")
+        order_num = body_dict.get("order_num", "")
+        payment_sum = body_dict.get("sum", "0")
+        customer_email = body_dict.get("customer_email", "")
+        customer_phone = body_dict.get("customer_phone", "")
+        payment_date = body_dict.get("date", "")
+        payment_type = body_dict.get("payment_type", "")
+        
+        print(f"📋 Order ID: {order_id}")
+        print(f"📋 Order Number: {order_num}")
+        print(f"💰 Payment Sum: {payment_sum} RUB")
+        print(f"📧 Customer Email: {customer_email}")
+        print(f"📱 Customer Phone: {customer_phone}")
+        print(f"📅 Payment Date: {payment_date}")
+        print(f"💳 Payment Type: {payment_type}")
+        print(f"✅ Payment Status: {payment_status}")
+        
+        # Check if products field exists
+        if "products" in body_dict:
+            print(f"\n📦 Products: {body_dict['products']}")
+        
+        print(f"\n🔍 Status check: payment_status.lower() = '{payment_status.lower()}'")
         
         if payment_status.lower() == "success":
-            print("✅ Payment successful - granting access")
-            print("=" * 60)
+            print("\n" + "=" * 80)
+            print("✅ PAYMENT SUCCESSFUL - GRANTING ACCESS")
+            print("=" * 80)
+            print(f"👤 Processing payment for order: {order_id}")
+            print(f"💵 Amount: {payment_sum} RUB")
+            print(f"📧 Email: {customer_email}")
+            
             handle_prodamus_payment(bot, body_dict)
-            return {"status": "ok"}, 200
+            
+            print("\n✅ Payment processed successfully!")
+            print("=" * 80)
+            return {"status": "ok", "order_id": order_id}, 200
         else:
-            print(f"❌ Payment not successful: {payment_status}")
-            print("=" * 60)
+            print("\n" + "=" * 80)
+            print(f"❌ PAYMENT NOT SUCCESSFUL: {payment_status}")
+            print("=" * 80)
+            print(f"📋 Order ID: {order_id}")
+            print(f"⚠️  Status description: {body_dict.get('payment_status_description', 'N/A')}")
+            
             # Still notify about failed payment
             handle_prodamus_payment(bot, body_dict)
+            
+            print("=" * 80)
             return {"status": "ok", "payment_status": payment_status}, 200
         
     except Exception as e:
