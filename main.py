@@ -97,25 +97,18 @@ def _prodamus_webhook():
                     print(f"   - {attr}: {type(getattr(prodamuspy, attr))}")
             print("=" * 80)
             
-            # Try different class names
-            if hasattr(prodamuspy, 'PyProdamus'):
+            # Try different class names (actual class is ProdamusPy, not PyProdamus!)
+            if hasattr(prodamuspy, 'ProdamusPy'):
+                ProdamusClass = prodamuspy.ProdamusPy
+                print("✅ Found: prodamuspy.ProdamusPy")
+            elif hasattr(prodamuspy, 'PyProdamus'):
                 ProdamusClass = prodamuspy.PyProdamus
                 print("✅ Found: prodamuspy.PyProdamus")
             elif hasattr(prodamuspy, 'Prodamus'):
                 ProdamusClass = prodamuspy.Prodamus
                 print("✅ Found: prodamuspy.Prodamus")
-            elif hasattr(prodamuspy, 'prodamus'):
-                # It might be a submodule
-                print("🔍 Found prodamuspy.prodamus submodule, checking...")
-                submodule = getattr(prodamuspy, 'prodamus')
-                print(f"📦 Submodule attributes: {[a for a in dir(submodule) if not a.startswith('_')]}")
-                if hasattr(submodule, 'PyProdamus'):
-                    ProdamusClass = submodule.PyProdamus
-                    print("✅ Found: prodamuspy.prodamus.PyProdamus")
-                else:
-                    raise AttributeError(f"Cannot find PyProdamus class. Available in module: {[a for a in dir(prodamuspy) if not a.startswith('_')]}")
             else:
-                raise AttributeError(f"Cannot find PyProdamus or Prodamus class. Available in module: {[a for a in dir(prodamuspy) if not a.startswith('_')]}")
+                raise AttributeError(f"Cannot find Prodamus class. Available in module: {[a for a in dir(prodamuspy) if not a.startswith('_')]}")
                 
         except ImportError as e:
             print(f"❌ Import error: {e}")
