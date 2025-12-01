@@ -124,9 +124,30 @@ def _prodamus_webhook():
         print("=" * 80)
         print(f"⏰ Time: {request.environ.get('REQUEST_TIME', 'unknown')}")
         print(f"🌐 Remote IP: {request.remote_addr}")
+        print(f"🌐 X-Forwarded-For: {request.headers.get('X-Forwarded-For', 'not set')}")
+        print(f"🌐 X-Real-IP: {request.headers.get('X-Real-IP', 'not set')}")
         print(f"📋 Method: {request.method}")
         print(f"📝 Content-Type: {request.content_type}")
         print(f"📏 Content-Length: {request.content_length}")
+        
+        # Check for proxy/gateway indicators
+        print(f"\n🔍 PROXY/GATEWAY CHECK:")
+        proxy_headers = ['X-Forwarded-For', 'X-Forwarded-Proto', 'X-Real-IP', 
+                        'Via', 'X-Forwarded-Host', 'Forwarded', 'CF-Ray']
+        found_proxy = False
+        for ph in proxy_headers:
+            value = request.headers.get(ph)
+            if value:
+                print(f"  ⚠️  {ph}: {value}")
+                found_proxy = True
+        if not found_proxy:
+            print(f"  ✅ No proxy headers detected")
+        
+        # Check WSGI environment for modifications
+        print(f"\n🔍 WSGI ENVIRONMENT:")
+        print(f"  SERVER_SOFTWARE: {request.environ.get('SERVER_SOFTWARE', 'unknown')}")
+        print(f"  wsgi.input type: {type(request.environ.get('wsgi.input'))}")
+        print(f"  CONTENT_LENGTH: {request.environ.get('CONTENT_LENGTH', 'not set')}")
         
         # Log all headers
         print("\n📨 HEADERS:")
@@ -148,11 +169,41 @@ def _prodamus_webhook():
         print("\n" + "=" * 80)
         print("STEP 1: Get raw body from webhook")
         print("=" * 80)
+        
+        # Get raw body BEFORE Flask processes it
         raw_body = request.get_data(as_text=True)
         print(f"📦 Raw body length: {len(raw_body)} bytes")
+        print(f"📦 Raw body type: {type(raw_body)}")
         print(f"📦 Raw body (first 300 chars):\n{raw_body[:300]}...")
         if len(raw_body) > 300:
             print(f"📦 Raw body (last 100 chars):\n...{raw_body[-100:]}")
+        
+        # Also check what Flask's request.form parsed
+        print(f"\n🔍 COMPARISON: Flask request.form vs raw body")
+        flask_parsed = request.form.to_dict()
+        print(f"📦 Flask request.form keys: {list(flask_parsed.keys())}")
+        print(f"📦 Flask request.form sample: {dict(list(flask_parsed.items())[:3])}")
+        
+        # Check if body was consumed/modified
+        print(f"\n🔍 BODY INTEGRITY CHECK:")
+        print(f"📦 request.content_length: {request.content_length}")
+        print(f"📦 len(raw_body): {len(raw_body)}")
+        print(f"📦 Match: {request.content_length == len(raw_body) if request.content_length else 'N/A'}")
+        
+        # Calculate hash of raw body for verification
+        import hashlib
+        raw_body_hash = hashlib.md5(raw_body.encode('utf-8')).hexdigest()
+        print(f"📦 Raw body MD5 hash: {raw_body_hash}")
+        
+        # Check if there are any encoding issues
+        print(f"\n🔍 ENCODING CHECK:")
+        print(f"📦 Raw body encoding: utf-8")
+        try:
+            raw_body_bytes = raw_body.encode('utf-8')
+            print(f"📦 Re-encoded length: {len(raw_body_bytes)} bytes")
+            print(f"📦 Match with original: {len(raw_body_bytes) == len(raw_body.encode('utf-8'))}")
+        except Exception as e:
+            print(f"❌ Encoding error: {e}")
         
         print("\n" + "=" * 80)
         print("STEP 2: Parse body with prodamus.parse()")
@@ -160,12 +211,39 @@ def _prodamus_webhook():
         body_dict = prodamus.parse(raw_body)
         print(f"✅ Parsed successfully!")
         print(f"📊 Total fields parsed: {len(body_dict)}")
+        
+        # Check if parsing modified anything
+        print(f"\n🔍 PARSING INTEGRITY CHECK:")
+        from urllib.parse import parse_qs, urlencode
+        
+        # Re-encode the parsed dict to see if it matches original
+        try:
+            # Flatten the dict back to query string (without nested arrays for now)
+            flat_dict = {k: str(v) for k, v in body_dict.items() if not isinstance(v, dict)}
+            reconstructed = urlencode(sorted(flat_dict.items()))
+            print(f"📦 Reconstructed (flat) length: {len(reconstructed)} bytes")
+            print(f"📦 Original raw body length: {len(raw_body)} bytes")
+            
+            # Check if raw_body contains all keys from parsed dict
+            print(f"\n🔍 Checking if all parsed keys exist in raw body:")
+            for key in list(body_dict.keys())[:5]:  # Check first 5 keys
+                if not isinstance(body_dict[key], dict):
+                    exists = key in raw_body
+                    print(f"  {key}: {'✅' if exists else '❌'} in raw body")
+        except Exception as e:
+            print(f"⚠️  Could not reconstruct: {e}")
+        
         print(f"\n📋 All parsed fields:")
         for key, value in sorted(body_dict.items()):
             if isinstance(value, dict):
                 print(f"  {key}: (nested dict with {len(value)} items)")
                 for nested_key, nested_value in value.items():
-                    print(f"    {nested_key}: {nested_value}")
+                    if isinstance(nested_value, dict):
+                        print(f"    {nested_key}: (nested dict with {len(nested_value)} items)")
+                        for n2_key, n2_value in list(nested_value.items())[:3]:
+                            print(f"      {n2_key}: {n2_value}")
+                    else:
+                        print(f"    {nested_key}: {nested_value}")
             else:
                 print(f"  {key}: {value}")
         
@@ -180,6 +258,32 @@ def _prodamus_webhook():
             print("❌ ERROR: No signature in header!")
             return {"error": "Missing signature"}, 400
         
+        # Try to recreate the signature to see if body was modified
+        print(f"\n🔍 SIGNATURE INTEGRITY CHECK:")
+        try:
+            # Calculate what signature SHOULD be based on our parsed data
+            calculated_sign = prodamus.sign(body_dict)
+            print(f"🔐 Calculated signature (from parsed data): {calculated_sign}")
+            print(f"🔐 Received signature (from header):        {received_sign}")
+            print(f"🔐 Signatures match: {calculated_sign == received_sign}")
+            
+            if calculated_sign != received_sign:
+                print(f"\n⚠️  WARNING: Signatures don't match!")
+                print(f"This suggests either:")
+                print(f"  1. The request body was modified by a proxy/gateway")
+                print(f"  2. The secret key is incorrect")
+                print(f"  3. ProDAMUS is calculating signature differently")
+                
+                # Show first difference
+                for i, (c1, c2) in enumerate(zip(calculated_sign, received_sign)):
+                    if c1 != c2:
+                        print(f"  First difference at position {i}: '{c1}' vs '{c2}'")
+                        print(f"  Calculated [...{calculated_sign[max(0,i-10):i+10]}...]")
+                        print(f"  Received   [...{received_sign[max(0,i-10):i+10]}...]")
+                        break
+        except Exception as e:
+            print(f"⚠️  Could not calculate signature: {e}")
+        
         print(f"\n🔍 Calling prodamus.verify()...")
         print(f"   - body_dict keys: {list(body_dict.keys())}")
         print(f"   - signature: {received_sign[:30]}...")
@@ -187,6 +291,42 @@ def _prodamus_webhook():
         is_valid = prodamus.verify(body_dict, received_sign)
         
         print(f"\n🔍 Verification result: {is_valid}")
+        
+        # Additional debug if verification failed
+        if not is_valid:
+            print(f"\n🔍 DEBUGGING FAILED VERIFICATION:")
+            print(f"📦 Body dict sample (first 5 items):")
+            for key, value in list(body_dict.items())[:5]:
+                print(f"   {key}: {value} (type: {type(value).__name__})")
+            
+            # Check if there's a sign field in the body (shouldn't be)
+            if 'sign' in body_dict:
+                print(f"⚠️  WARNING: 'sign' field found in body_dict!")
+                print(f"   This should not be included in verification")
+            
+            # Try verification with Flask's parsed data
+            print(f"\n🔍 Trying verification with Flask's request.form:")
+            try:
+                is_valid_flask = prodamus.verify(flask_parsed, received_sign)
+                print(f"   Verification with Flask data: {is_valid_flask}")
+                if is_valid_flask and not is_valid:
+                    print(f"   ✅ Flask data verified! Issue is with prodamus.parse()")
+            except Exception as e:
+                print(f"   ❌ Error: {e}")
+            
+            # Try parsing raw body again with different encoding
+            print(f"\n🔍 Trying different parsing methods:")
+            from urllib.parse import parse_qsl
+            try:
+                # Method 1: parse_qsl (standard library)
+                parsed_qsl = dict(parse_qsl(raw_body, keep_blank_values=True))
+                print(f"   parse_qsl result keys: {list(parsed_qsl.keys())[:5]}")
+                is_valid_qsl = prodamus.verify(parsed_qsl, received_sign)
+                print(f"   Verification with parse_qsl: {is_valid_qsl}")
+                if is_valid_qsl:
+                    print(f"   ✅ parse_qsl worked! Issue is with prodamus.parse()")
+            except Exception as e:
+                print(f"   ❌ parse_qsl error: {e}")
         
         if not is_valid:
             print("\n" + "=" * 80)
