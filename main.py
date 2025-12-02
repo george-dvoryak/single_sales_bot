@@ -43,9 +43,9 @@ try:
     from utils.channel import check_course_channels
     from google_sheets import get_courses_data, get_texts_data
     from utils.images import preload_images_for_bot
-    from handlers.check_signature import HmacPy
     from db import has_active_subscription, add_purchase
     from utils.text_utils import strip_html
+    from payments.prodamus_sign_formation import sign as prodamus_sign, deep_int_to_string as prodamus_deep_int_to_string
     _debug_log("main.py", "Handlers and utilities imported successfully")
 except Exception as e:
     print(f"[main.py] ERROR importing handlers/utilities: {e}")
@@ -203,10 +203,20 @@ def prodamus_webhook():
         from config import PRODAMUS_SECRET_KEY
         import json
 
-        # Read raw body data as text (exactly what was signed)
+        # Read raw body data as text
         raw_body = request.get_data(as_text=True)
         if not raw_body:
             return "NO DATA", 400
+
+        # Try to parse JSON payload
+        try:
+            data = json.loads(raw_body)
+        except Exception as e:
+            print("[prodamus_webhook] JSON parse error:", e)
+            return "BAD JSON", 400
+
+        if not isinstance(data, dict):
+            return "BAD DATA", 400
 
         # Get signature from headers
         header_signature = (
@@ -217,20 +227,16 @@ def prodamus_webhook():
         if not header_signature:
             return "NO SIGN HEADER", 400
 
-        # Verify signature using HmacPy (tested script)
-        if not HmacPy.verify(raw_body, PRODAMUS_SECRET_KEY, header_signature):
+        # Make copy before transforming
+        payload = dict(data)
+
+        # Ensure values are strings and sorted, then sign using Prodamus helper
+        prodamus_deep_int_to_string(payload)
+        calculated_signature = prodamus_sign(payload, PRODAMUS_SECRET_KEY)
+
+        if calculated_signature != header_signature:
             print("[prodamus_webhook] Signature mismatch")
             return "INVALID SIGNATURE", 403
-
-        # Parse JSON payload after successful signature verification
-        try:
-            data = json.loads(raw_body)
-        except Exception as e:
-            print("[prodamus_webhook] JSON parse error:", e)
-            return "BAD JSON", 400
-
-        if not isinstance(data, dict):
-            return "BAD DATA", 400
 
         # Business logic: mark purchase as paid if payment_status is success
         payment_status = str(data.get("payment_status", "")).lower()
