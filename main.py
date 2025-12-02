@@ -43,6 +43,9 @@ try:
     from utils.channel import check_course_channels
     from google_sheets import get_courses_data, get_texts_data
     from utils.images import preload_images_for_bot
+    from handlers.check_signature import HmacPy
+    from db import has_active_subscription, add_purchase
+    from utils.text_utils import strip_html
     _debug_log("main.py", "Handlers and utilities imported successfully")
 except Exception as e:
     print(f"[main.py] ERROR importing handlers/utilities: {e}")
@@ -175,6 +178,138 @@ def _webhook():
         
     except Exception as e:
         print(f"[webhook] FATAL ERROR: {e}")
+        traceback.print_exc()
+        return "ERROR", 500
+
+
+@application.post("/prodamus_webhook")
+def prodamus_webhook():
+    """
+    Prodamus webhook endpoint for payment result notifications.
+
+    Expects:
+    - JSON or form-encoded body with payment data (including signature field)
+    - Signature header "Sign" (exact name from Prodamus docs)
+
+    Verification steps (strictly following the provided algorithm):
+    - Take request contents and convert all values ​​to strings
+    - Sort by keys (including nested) in alphabetical order
+    - Convert to JSON
+    - Escape '/' as '\/'
+    - Sign using SHA256 HMAC with secret key
+    - Compare with signature from headers
+    """
+    try:
+        from config import PRODAMUS_SECRET_KEY
+        import json
+
+        # Read raw body data as text (exactly what was signed)
+        raw_body = request.get_data(as_text=True)
+        if not raw_body:
+            return "NO DATA", 400
+
+        # Get signature from headers
+        header_signature = (
+            request.headers.get("Sign")
+            or request.headers.get("SIGN")
+            or request.headers.get("X-Sign")
+        )
+        if not header_signature:
+            return "NO SIGN HEADER", 400
+
+        # Verify signature using HmacPy (tested script)
+        if not HmacPy.verify(raw_body, PRODAMUS_SECRET_KEY, header_signature):
+            print("[prodamus_webhook] Signature mismatch")
+            return "INVALID SIGNATURE", 403
+
+        # Parse JSON payload after successful signature verification
+        try:
+            data = json.loads(raw_body)
+        except Exception as e:
+            print("[prodamus_webhook] JSON parse error:", e)
+            return "BAD JSON", 400
+
+        if not isinstance(data, dict):
+            return "BAD DATA", 400
+
+        # Business logic: mark purchase as paid if payment_status is success
+        payment_status = str(data.get("payment_status", "")).lower()
+        if payment_status not in ("success", "paid"):
+            # For non-successful statuses, just acknowledge
+            print(f"[prodamus_webhook] Non-success status received: {payment_status}")
+            return "OK", 200
+
+        # Extract user_id and course_id from order_id.
+        # We expect format: "bot-<user_id>-<course_id>" as set in payments.prodamus.build_prodamus_payload
+        order_id = str(data.get("order_id", "") or "")
+        # Split only into 3 parts: "bot", "<user_id>", "<course_id-with-optional-dashes>"
+        parts = order_id.split("-", 2)
+        if len(parts) != 3 or parts[0] != "bot":
+            print(f"[prodamus_webhook] Invalid order_id format: {order_id}")
+            return "OK", 200
+
+        try:
+            user_id = int(parts[1])
+        except ValueError:
+            print(f"[prodamus_webhook] Invalid user_id in order_id: {order_id}")
+            return "OK", 200
+
+        course_id = parts[2]
+
+        try:
+            courses = get_courses_data()
+        except Exception as e:
+            print("[prodamus_webhook] Error fetching courses:", e)
+            return "OK", 200
+
+        course = next((x for x in courses if str(x.get("id")) == str(course_id)), None)
+        if not course:
+            print(f"[prodamus_webhook] Course not found for id={course_id}")
+            return "OK", 200
+
+        if has_active_subscription(user_id, str(course_id)):
+            print(f"[prodamus_webhook] Subscription already active for user={user_id}, course={course_id}")
+            return "OK", 200
+
+        course_name = course.get("name", f"ID {course_id}")
+        duration_days = int(course.get("duration_days", 0) or 0)
+        channel = str(course.get("channel", "") or "")
+
+        payment_id = order_id or ""
+
+        expiry_ts = add_purchase(
+            user_id,
+            str(course_id),
+            course_name,
+            channel,
+            duration_days,
+            payment_id=payment_id,
+        )
+
+        invite_link = None
+        if channel:
+            try:
+                invite = bot.create_chat_invite_link(chat_id=channel, member_limit=1, expire_date=None)
+                invite_link = invite.invite_link
+            except Exception as e:
+                print(f"[prodamus_webhook] create_chat_invite_link failed for {channel}:", e)
+
+        clean_course_name = strip_html(course_name) if course_name else f"ID {course_id}"
+        text = f"Оплата через Prodamus успешно выполнена! Вам предоставлен доступ к курсу {clean_course_name}."
+
+        if invite_link:
+            text += "\nНажмите кнопку ниже, чтобы перейти к материалам курса."
+            kb = telebot.types.InlineKeyboardMarkup()
+            kb.add(telebot.types.InlineKeyboardButton("Перейти в канал курса", url=invite_link))
+            bot.send_message(user_id, text, reply_markup=kb)
+        else:
+            bot.send_message(user_id, text)
+
+        print(f"[prodamus_webhook] Successfully processed payment for user={user_id}, course={course_id}, expiry={expiry_ts}")
+        return "OK", 200
+
+    except Exception as e:
+        print("[prodamus_webhook] ERROR:", e)
         traceback.print_exc()
         return "ERROR", 500
 

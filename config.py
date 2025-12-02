@@ -28,6 +28,18 @@ if not PAYMENT_PROVIDER_TOKEN:
     raise ValueError("PAYMENT_PROVIDER_TOKEN is required. Please set it in .env file")
 CURRENCY = os.getenv("CURRENCY", "RUB")
 
+# === Prodamus Payments ===
+# Toggle to enable/disable Prodamus as an additional payment method.
+# Make sure to add ENABLE_PRODAMUS to your .env (e.g. ENABLE_PRODAMUS=true)
+ENABLE_PRODAMUS = get_bool_env("ENABLE_PRODAMUS", False)
+
+# Base URL of your Prodamus payment form (e.g. https://demo.payform.ru/ or your real form URL)
+PRODAMUS_FORM_URL = os.getenv("PRODAMUS_FORM_URL", "")
+
+# Secret key from Prodamus settings (used to sign/verify data)
+PRODAMUS_SECRET_KEY = os.getenv("PRODAMUS_SECRET_KEY", "")
+
+
 # === Images ===
 # Local directory where the bot will cache downloaded images from Google Sheets
 IMAGES_DIR = os.getenv("IMAGES_DIR", "images")
