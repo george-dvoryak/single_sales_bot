@@ -6,6 +6,7 @@ from google_sheets import get_courses_data, get_texts_data
 from db import has_active_subscription
 from utils.keyboards import create_catalog_keyboard, create_course_buttons
 from utils.text_utils import strip_html
+from utils.images import get_local_image_path
 
 
 # Load texts
@@ -50,20 +51,25 @@ def register_handlers(bot):
             return
 
         kb = create_catalog_keyboard(courses)
-        banner = texts.get("catalog_image_url")
+        banner_url = texts.get("catalog_image_url")
         caption = texts.get("catalog_text", CATALOG_TITLE)
         
         if edit_message:
             # When going back to catalog, always delete old message and send new one
             # This ensures the image updates correctly (can't change photo in existing message)
-            try:
-                bot.delete_message(chat_id=edit_chat_id, message_id=edit_message_id)
-            except Exception:
-                pass  # If deletion fails (e.g., message too old), continue anyway
+                try:
+                    bot.delete_message(chat_id=edit_chat_id, message_id=edit_message_id)
+                except Exception:
+                    pass  # If deletion fails (e.g., message too old), continue anyway
             # Send new catalog message
             try:
-                if banner:
-                    bot.send_photo(user_id, banner, caption=caption, reply_markup=kb)
+                if banner_url:
+                    local_path = get_local_image_path(banner_url)
+                    if local_path:
+                        with open(local_path, "rb") as photo:
+                            bot.send_photo(user_id, photo, caption=caption, reply_markup=kb)
+                    else:
+                        bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
                 else:
                     bot.send_message(user_id, caption, reply_markup=kb)
             except Exception:
@@ -71,8 +77,13 @@ def register_handlers(bot):
         else:
             # Send new message
             try:
-                if banner:
-                    bot.send_photo(user_id, banner, caption=caption, reply_markup=kb)
+                if banner_url:
+                    local_path = get_local_image_path(banner_url)
+                    if local_path:
+                        with open(local_path, "rb") as photo:
+                            bot.send_photo(user_id, photo, caption=caption, reply_markup=kb)
+                    else:
+                        bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
                 else:
                     bot.send_message(user_id, caption, reply_markup=kb)
             except Exception:
@@ -166,7 +177,12 @@ def register_handlers(bot):
                         except Exception:
                             pass
                 # Send new photo (either because original wasn't photo, or edit/delete failed)
-                bot.send_photo(user_id, image_url, caption=text, reply_markup=ikb)
+                local_path = get_local_image_path(image_url)
+                if local_path:
+                    with open(local_path, "rb") as photo:
+                        bot.send_photo(user_id, photo, caption=text, reply_markup=ikb)
+                else:
+                    bot.send_photo(user_id, image_url, caption=text, reply_markup=ikb)
                 message_sent = True
             else:
                 # No course image - edit text or send new message

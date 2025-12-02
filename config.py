@@ -28,6 +28,10 @@ if not PAYMENT_PROVIDER_TOKEN:
     raise ValueError("PAYMENT_PROVIDER_TOKEN is required. Please set it in .env file")
 CURRENCY = os.getenv("CURRENCY", "RUB")
 
+# === Images ===
+# Local directory where the bot will cache downloaded images from Google Sheets
+IMAGES_DIR = os.getenv("IMAGES_DIR", "images")
+
 # === SQLite DB ===
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
 

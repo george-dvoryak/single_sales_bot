@@ -36,15 +36,16 @@ except Exception as e:
     print(f"[main.py] ERROR importing config: {e}")
     raise
 
-# Import handlers
+# Import handlers and supporting utilities
 try:
-    _debug_log("main.py", "Starting handler imports")
+    _debug_log("main.py", "Starting handler and utility imports")
     from handlers import basic_handlers, catalog_handlers, payment_handlers, admin_handlers
     from utils.channel import check_course_channels
-    from google_sheets import get_courses_data
-    _debug_log("main.py", "Handlers imported successfully")
+    from google_sheets import get_courses_data, get_texts_data
+    from utils.images import preload_images_for_bot
+    _debug_log("main.py", "Handlers and utilities imported successfully")
 except Exception as e:
-    print(f"[main.py] ERROR importing handlers: {e}")
+    print(f"[main.py] ERROR importing handlers/utilities: {e}")
     raise
 
 # Initialize bot
@@ -67,6 +68,19 @@ try:
 except Exception as e:
     print(f"[main.py] ERROR registering handlers: {e}")
     raise
+
+# Preload images from Google Sheets so they are available locally for sending
+try:
+    _debug_log("main.py", "Starting image preloading")
+    texts_for_images = {}
+    try:
+        texts_for_images = get_texts_data()
+    except Exception as e:
+        print(f"[main.py] Warning: could not fetch texts for image preloading: {e}")
+    preload_images_for_bot(get_courses_data, texts_for_images)
+    _debug_log("main.py", "Image preloading completed")
+except Exception as e:
+    print(f"[main.py] ERROR during image preloading: {e}")
 
 # Flask app for webhook mode (WSGI server on PythonAnywhere)
 try:

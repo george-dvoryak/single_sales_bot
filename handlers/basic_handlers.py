@@ -7,6 +7,7 @@ from db import add_user, get_active_subscriptions
 from google_sheets import get_texts_data
 from utils.keyboards import get_main_menu_keyboard
 from utils.text_utils import strip_html
+from utils.images import get_local_image_path
 
 
 # Load customizable texts
@@ -34,7 +35,13 @@ def register_handlers(bot):
         welcome_image_url = texts.get("welcome_image_url")
         try:
             if welcome_image_url:
-                bot.send_photo(user_id, welcome_image_url, caption=WELCOME_MSG, reply_markup=keyboard)
+                local_path = get_local_image_path(welcome_image_url)
+                if local_path:
+                    with open(local_path, "rb") as photo:
+                        bot.send_photo(user_id, photo, caption=WELCOME_MSG, reply_markup=keyboard)
+                else:
+                    # Fallback to sending by URL if cache/download failed
+                    bot.send_photo(user_id, welcome_image_url, caption=WELCOME_MSG, reply_markup=keyboard)
             else:
                 bot.send_message(user_id, WELCOME_MSG, reply_markup=keyboard)
         except Exception:
