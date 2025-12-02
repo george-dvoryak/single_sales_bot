@@ -78,9 +78,9 @@ WEBHOOK_SECRET_TOKEN=your_secret_token
 Create a Google Sheet with two tabs:
 
 **Courses Tab:**
-| id | name | description | price | duration_minutes | image_url | channel |
-|----|------|-------------|-------|------------------|-----------|---------|
-| 1  | Course Name | Course Description | 1000 | 43200 | https://... | @channel_name |
+| id | name | description | price | duration_days | image_url | channel |
+|----|------|-------------|-------|--------------|-----------|---------|
+| 1  | Course Name | Course Description | 1000 | 30 | https://... | @channel_name |
 
 **Texts Tab:**
 | key | value |

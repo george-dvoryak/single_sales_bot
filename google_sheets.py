@@ -27,12 +27,27 @@ def get_courses_data():
         records = ws.get_all_records()
         courses = []
         for rec in records:
+            # Duration is stored in DAYS in Google Sheets (duration_days column).
+            # Fall back to older/alternate column names if needed.
+            duration_raw = (
+                rec.get("duration_days")
+                or rec.get("Duration_days")
+                or rec.get("duration")
+                or rec.get("Duration")
+                or rec.get("Срок")
+                or 0
+            )
+            try:
+                duration_days = int(float(duration_raw) if duration_raw else 0)
+            except (ValueError, TypeError):
+                duration_days = 0
+
             course = {
                 "id": str(rec.get("id") or rec.get("ID") or rec.get("Id") or "").strip(),
                 "name": (rec.get("name") or rec.get("Name") or rec.get("Название") or "").strip(),
                 "description": (rec.get("description") or rec.get("Description") or rec.get("Описание") or "").strip(),
                 "price": float(rec.get("price") or rec.get("Price") or rec.get("Цена") or 0),
-                "duration_minutes": int(float(rec.get("duration_minutes") or rec.get("Duration") or rec.get("Срок") or 0)),
+                "duration_days": duration_days,
                 "image_url": (rec.get("image_url") or rec.get("Image") or rec.get("Картинка") or "").strip(),
                 "channel": (rec.get("channel") or rec.get("Channel") or rec.get("Канал") or "").strip(),
             }
@@ -55,7 +70,16 @@ def get_courses_data():
             name = (d.get("name") or d.get("Name") or d.get("Название") or "").strip()
             desc = (d.get("description") or d.get("Description") or d.get("Описание") or "").strip()
             price = d.get("price") or d.get("Price") or d.get("Цена") or "0"
-            duration = d.get("duration_minutes") or d.get("Duration") or d.get("Срок") or "0"
+            # Duration is stored in DAYS in Google Sheets (duration_days column).
+            # Fall back to older/alternate column names if needed.
+            duration = (
+                d.get("duration_days")
+                or d.get("Duration_days")
+                or d.get("duration")
+                or d.get("Duration")
+                or d.get("Срок")
+                or "0"
+            )
             image = (d.get("image_url") or d.get("Image") or d.get("Картинка") or "").strip()
             channel = (d.get("channel") or d.get("Channel") or d.get("Канал") or "").strip()
             try:
@@ -71,7 +95,7 @@ def get_courses_data():
                 "name": name,
                 "description": desc,
                 "price": price,
-                "duration_minutes": duration,
+                "duration_days": duration,
                 "image_url": image,
                 "channel": channel
             })

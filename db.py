@@ -56,11 +56,23 @@ def get_user(user_id: int):
     cur.execute("SELECT * FROM users WHERE user_id = ?;", (user_id,))
     return cur.fetchone()
 
-def add_purchase(user_id: int, course_id: str, course_name: str, channel_id: str, duration_minutes: int, payment_id: str = None):
+def add_purchase(user_id: int, course_id: str, course_name: str, channel_id: str, duration_days: int, payment_id: str = None):
     conn = get_connection()
     cur = conn.cursor()
     now = int(time.time())
-    expiry_ts = now + int(duration_minutes) * 60
+
+    # duration_days > 0 → limited-time access
+    # duration_days <= 0 or None → practically unlimited access (set very far future expiry)
+    try:
+        d = int(duration_days) if duration_days is not None else 0
+    except (ValueError, TypeError):
+        d = 0
+
+    if d > 0:
+        expiry_ts = now + d * 24 * 60 * 60  # days → seconds
+    else:
+        # Unlimited courses: set expiry to 50 years from now
+        expiry_ts = now + 50 * 365 * 24 * 60 * 60
     cur.execute(
         """
         INSERT INTO purchases (user_id, course_id, course_name, channel_id, expiry, payment_id)

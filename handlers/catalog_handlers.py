@@ -121,7 +121,7 @@ def register_handlers(bot):
         name = course.get("name", "")
         desc = course.get("description", "")
         price = course.get("price", 0)
-        duration = course.get("duration_minutes", 0)
+        duration_days = int(course.get("duration_days", 0) or 0)
         image_url = course.get("image_url", "")
         channel_id = course.get("channel", "")
 
@@ -158,7 +158,12 @@ def register_handlers(bot):
 
         # Strip HTML from description too
         clean_desc = strip_html(desc) if desc else ""
-        text = f"{formatted_name}\n{clean_desc}\n\nЦена: {price} руб.\nДоступ: {duration} мин."
+        if duration_days > 0:
+            access_text = f"Доступ: {duration_days} дн."
+        else:
+            access_text = "Доступ: без ограничения по времени"
+
+        text = f"{formatted_name}\n{clean_desc}\n\nЦена: {price} руб.\n{access_text}"
         
         # Use the create_course_buttons function to get payment buttons
         ikb = create_course_buttons(course_id)

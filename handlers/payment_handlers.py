@@ -95,10 +95,17 @@ def register_handlers(bot):
             courses = []
         course = next((x for x in courses if str(x.get("id")) == str(course_id)), None)
         course_name = course.get("name", f"ID {course_id}") if course else f"ID {course_id}"
-        duration = int(course.get("duration_minutes", 0)) if course else 0
+        duration_days = int(course.get("duration_days", 0)) if course else 0
         channel = str(course.get("channel", "")) if course else ""
 
-        expiry_ts = add_purchase(user_id, str(course_id), course_name, channel, duration, payment_id=payment.telegram_payment_charge_id)
+        expiry_ts = add_purchase(
+            user_id,
+            str(course_id),
+            course_name,
+            channel,
+            duration_days,
+            payment_id=payment.telegram_payment_charge_id
+        )
 
         invite_link = None
         if channel:
