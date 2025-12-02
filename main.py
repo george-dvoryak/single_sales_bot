@@ -332,13 +332,16 @@ def prodamus_webhook():
             },
         )
 
-        if calculated_signature != header_signature:
-            print("[prodamus_webhook] Signature mismatch")
+        # Trust the HmacPy reference implementation as the source of truth.
+        # If it says the signature is valid, we accept the webhook even if
+        # our older helper (prodamus_sign) disagrees.
+        if not hmacpy_valid:
+            print("[prodamus_webhook] Signature mismatch (HmacPy invalid)")
             _agent_debug_log_prodamus(
                 "H5",
                 "main.py:prodamus_webhook",
                 "signature mismatch",
-                {},
+                {"calculated_signature": calculated_signature},
             )
             return "INVALID SIGNATURE", 403
 
