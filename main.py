@@ -6,6 +6,7 @@ Main entry point for the bot (polling or webhook mode)
 
 import time
 import traceback
+import json
 import telebot
 from flask import Flask, request, abort
 from typing import Dict, Any
@@ -105,6 +106,28 @@ def _diag():
     return report, 200
 
 
+@application.get("/webhook_info")
+def _webhook_info():
+    """Check webhook status and configuration"""
+    try:
+        webhook_info = bot.get_webhook_info()
+        info = {
+            "webhook_url": webhook_info.url,
+            "has_custom_certificate": webhook_info.has_custom_certificate,
+            "pending_update_count": webhook_info.pending_update_count,
+            "last_error_date": webhook_info.last_error_date,
+            "last_error_message": webhook_info.last_error_message,
+            "max_connections": webhook_info.max_connections,
+            "allowed_updates": webhook_info.allowed_updates,
+            "configured_route": webhook_route,
+            "webhook_url_config": WEBHOOK_URL,
+            "use_webhook": USE_WEBHOOK,
+        }
+        return f"Webhook Info:\n{json.dumps(info, indent=2, default=str)}", 200
+    except Exception as e:
+        return f"Error getting webhook info: {e}\n{traceback.format_exc()}", 500
+
+
 # Webhook endpoint - use WEBHOOK_PATH if set, otherwise use default path
 webhook_route = WEBHOOK_PATH if WEBHOOK_PATH else f"/{TELEGRAM_BOT_TOKEN}"
 
@@ -112,17 +135,46 @@ webhook_route = WEBHOOK_PATH if WEBHOOK_PATH else f"/{TELEGRAM_BOT_TOKEN}"
 @application.post(webhook_route)
 def _webhook():
     """Telegram webhook endpoint"""
-    # Validate Telegram secret header if configured
-    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if WEBHOOK_SECRET_TOKEN and secret != WEBHOOK_SECRET_TOKEN:
-        abort(403)
-    # Forward the update to pyTelegramBotAPI
     try:
-        update = telebot.types.Update.de_json(request.stream.read().decode("utf-8"))
-        bot.process_new_updates([update])
+        print(f"[webhook] Received POST request to {webhook_route}")
+        
+        # Validate Telegram secret header if configured
+        secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+        if WEBHOOK_SECRET_TOKEN and secret != WEBHOOK_SECRET_TOKEN:
+            print(f"[webhook] ERROR: Invalid secret token")
+            abort(403)
+        
+        # Read request data
+        try:
+            raw_data = request.get_data()
+            if not raw_data:
+                print("[webhook] ERROR: No data received")
+                return "ERROR: No data", 400
+            
+            json_str = raw_data.decode("utf-8")
+            print(f"[webhook] Received data: {json_str[:200]}...")  # Log first 200 chars
+            
+            # Parse and process update
+            update = telebot.types.Update.de_json(json_str)
+            if update is None:
+                print("[webhook] ERROR: Failed to parse update")
+                return "ERROR: Invalid update", 400
+            
+            print(f"[webhook] Processing update: update_id={update.update_id}")
+            bot.process_new_updates([update])
+            print(f"[webhook] Successfully processed update {update.update_id}")
+            
+        except Exception as e:
+            print(f"[webhook] ERROR processing update: {e}")
+            traceback.print_exc()
+            return "ERROR", 500
+        
+        return "OK", 200
+        
     except Exception as e:
-        print(f"Error processing webhook update: {e}")
-    return "OK", 200
+        print(f"[webhook] FATAL ERROR: {e}")
+        traceback.print_exc()
+        return "ERROR", 500
 
 
 @application.post("/prodamus_webhook")
