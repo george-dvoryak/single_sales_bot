@@ -186,11 +186,11 @@ def _webhook():
 def prodamus_webhook():
     """
     Prodamus webhook endpoint for payment result notifications.
-
+    
     Expects:
     - JSON or form-encoded body with payment data (including signature field)
     - Signature header "Sign" (exact name from Prodamus docs)
-
+    
     Verification steps (strictly following the provided algorithm):
     - Take request contents and convert all values ​​to strings
     - Sort by keys (including nested) in alphabetical order
@@ -199,43 +199,147 @@ def prodamus_webhook():
     - Sign using SHA256 HMAC with secret key
     - Compare with signature from headers
     """
+    # #region agent log
+    try:
+        import json as _agent_json
+        import time as _agent_time
+
+        def _agent_debug_log_prodamus(hypothesis_id, location, message, data=None, run_id="initial"):
+            try:
+                payload = {
+                    "sessionId": "debug-session",
+                    "runId": run_id,
+                    "hypothesisId": hypothesis_id,
+                    "location": location,
+                    "message": message,
+                    "data": data or {},
+                    "timestamp": int(_agent_time.time() * 1000),
+                }
+                with open("/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log", "a", encoding="utf-8") as f:
+                    f.write(_agent_json.dumps(payload, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+    except Exception:
+        def _agent_debug_log_prodamus(*args, **kwargs):
+            pass
+    # #endregion
+
     try:
         from config import PRODAMUS_SECRET_KEY
         import json
+        from handlers.check_signature import HmacPy
+
+        _agent_debug_log_prodamus(
+            "H1",
+            "main.py:prodamus_webhook",
+            "request received",
+            {
+                "content_type": request.content_type,
+                "content_length": request.content_length,
+            },
+        )
 
         # Read raw body data as text
         raw_body = request.get_data(as_text=True)
         if not raw_body:
+            _agent_debug_log_prodamus(
+                "H2",
+                "main.py:prodamus_webhook",
+                "no raw body",
+                {},
+            )
             return "NO DATA", 400
+
+        _agent_debug_log_prodamus(
+            "H2",
+            "main.py:prodamus_webhook",
+            "raw body read",
+            {"length": len(raw_body)},
+        )
 
         # Try to parse JSON payload
         try:
             data = json.loads(raw_body)
         except Exception as e:
+            _agent_debug_log_prodamus(
+                "H3",
+                "main.py:prodamus_webhook",
+                "json parse error",
+                {"error": str(e)},
+            )
             print("[prodamus_webhook] JSON parse error:", e)
             return "BAD JSON", 400
 
         if not isinstance(data, dict):
+            _agent_debug_log_prodamus(
+                "H3",
+                "main.py:prodamus_webhook",
+                "parsed json is not dict",
+                {"type": str(type(data))},
+            )
             return "BAD DATA", 400
 
-        # Get signature from headers
+        _agent_debug_log_prodamus(
+            "H3",
+            "main.py:prodamus_webhook",
+            "parsed json ok",
+            {"keys": list(data.keys())},
+        )
+
+        # Get signature from headers (case-insensitive)
         header_signature = (
             request.headers.get("Sign")
             or request.headers.get("SIGN")
+            or request.headers.get("sign")
             or request.headers.get("X-Sign")
         )
         if not header_signature:
+            _agent_debug_log_prodamus(
+                "H4",
+                "main.py:prodamus_webhook",
+                "no signature header",
+                {"headers": dict(request.headers)},
+            )
             return "NO SIGN HEADER", 400
 
-        # Make copy before transforming
+        _agent_debug_log_prodamus(
+            "H4",
+            "main.py:prodamus_webhook",
+            "signature header found",
+            {"header_signature": header_signature},
+        )
+
+        # Make copy before transforming for Prodamus helper
         payload = dict(data)
 
-        # Ensure values are strings and sorted, then sign using Prodamus helper
+        # Ensure values are strings and sorted, then sign using current Prodamus helper
         prodamus_deep_int_to_string(payload)
         calculated_signature = prodamus_sign(payload, PRODAMUS_SECRET_KEY)
 
+        # Also calculate signature using HmacPy reference implementation on raw JSON body
+        hmacpy_signature = HmacPy.create(raw_body, PRODAMUS_SECRET_KEY)
+        hmacpy_valid = HmacPy.verify(raw_body, PRODAMUS_SECRET_KEY, header_signature)
+
+        _agent_debug_log_prodamus(
+            "H5",
+            "main.py:prodamus_webhook",
+            "signature comparison",
+            {
+                "calculated_signature": calculated_signature,
+                "header_signature": header_signature,
+                "hmacpy_signature": hmacpy_signature,
+                "hmacpy_valid": hmacpy_valid,
+            },
+        )
+
         if calculated_signature != header_signature:
             print("[prodamus_webhook] Signature mismatch")
+            _agent_debug_log_prodamus(
+                "H5",
+                "main.py:prodamus_webhook",
+                "signature mismatch",
+                {},
+            )
             return "INVALID SIGNATURE", 403
 
         # Business logic: mark purchase as paid if payment_status is success
@@ -243,6 +347,12 @@ def prodamus_webhook():
         if payment_status not in ("success", "paid"):
             # For non-successful statuses, just acknowledge
             print(f"[prodamus_webhook] Non-success status received: {payment_status}")
+            _agent_debug_log_prodamus(
+                "H6",
+                "main.py:prodamus_webhook",
+                "non-success status",
+                {"payment_status": payment_status},
+            )
             return "OK", 200
 
         # Extract user_id and course_id from order_id.
@@ -252,12 +362,24 @@ def prodamus_webhook():
         parts = order_id.split("-", 2)
         if len(parts) != 3 or parts[0] != "bot":
             print(f"[prodamus_webhook] Invalid order_id format: {order_id}")
+            _agent_debug_log_prodamus(
+                "H7",
+                "main.py:prodamus_webhook",
+                "invalid order_id format",
+                {"order_id": order_id},
+            )
             return "OK", 200
 
         try:
             user_id = int(parts[1])
         except ValueError:
             print(f"[prodamus_webhook] Invalid user_id in order_id: {order_id}")
+            _agent_debug_log_prodamus(
+                "H7",
+                "main.py:prodamus_webhook",
+                "invalid user_id in order_id",
+                {"order_id": order_id},
+            )
             return "OK", 200
 
         course_id = parts[2]
@@ -266,15 +388,33 @@ def prodamus_webhook():
             courses = get_courses_data()
         except Exception as e:
             print("[prodamus_webhook] Error fetching courses:", e)
+            _agent_debug_log_prodamus(
+                "H8",
+                "main.py:prodamus_webhook",
+                "error fetching courses",
+                {"error": str(e)},
+            )
             return "OK", 200
 
         course = next((x for x in courses if str(x.get("id")) == str(course_id)), None)
         if not course:
             print(f"[prodamus_webhook] Course not found for id={course_id}")
+            _agent_debug_log_prodamus(
+                "H8",
+                "main.py:prodamus_webhook",
+                "course not found",
+                {"course_id": course_id},
+            )
             return "OK", 200
 
         if has_active_subscription(user_id, str(course_id)):
             print(f"[prodamus_webhook] Subscription already active for user={user_id}, course={course_id}")
+            _agent_debug_log_prodamus(
+                "H8",
+                "main.py:prodamus_webhook",
+                "subscription already active",
+                {"user_id": user_id, "course_id": course_id},
+            )
             return "OK", 200
 
         course_name = course.get("name", f"ID {course_id}")
@@ -312,11 +452,23 @@ def prodamus_webhook():
             bot.send_message(user_id, text)
 
         print(f"[prodamus_webhook] Successfully processed payment for user={user_id}, course={course_id}, expiry={expiry_ts}")
+        _agent_debug_log_prodamus(
+            "H9",
+            "main.py:prodamus_webhook",
+            "payment processed successfully",
+            {"user_id": user_id, "course_id": course_id, "expiry_ts": expiry_ts},
+        )
         return "OK", 200
 
     except Exception as e:
         print("[prodamus_webhook] ERROR:", e)
         traceback.print_exc()
+        _agent_debug_log_prodamus(
+            "HEX",
+            "main.py:prodamus_webhook",
+            "exception",
+            {"error": str(e)},
+        )
         return "ERROR", 500
 
 
