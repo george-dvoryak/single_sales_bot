@@ -309,39 +309,38 @@ def prodamus_webhook():
             {"header_signature": header_signature},
         )
 
-        # Make copy before transforming for Prodamus helper
-        payload = dict(data)
+        # --- Signature verification (exact Prodamus algorithm) --------------
+        # 1) Берем содержимое запроса (массив данных)
+        # 2) Приводим все значения к строкам
+        # 3) Рекурсивно сортируем по ключам в алфавитном порядке
+        # 4) Переводим массив в JSON-строку с JSON_UNESCAPED_UNICODE
+        #    и экранированием '/' -> '\/'
+        # 5) Подписываем JSON через HMAC-SHA256 с секретным ключом
+        #
+        # Класс HmacPy реализует эту же последовательность шагов.
+        hmac_signature = HmacPy.create(data, PRODAMUS_SECRET_KEY)
+        hmac_valid = HmacPy.verify(data, PRODAMUS_SECRET_KEY, header_signature)
 
-        # Ensure values are strings and sorted, then sign using current Prodamus helper
-        prodamus_deep_int_to_string(payload)
-        calculated_signature = prodamus_sign(payload, PRODAMUS_SECRET_KEY)
-
-        # Also calculate signature using HmacPy reference implementation on raw JSON body
-        hmacpy_signature = HmacPy.create(raw_body, PRODAMUS_SECRET_KEY)
-        hmacpy_valid = HmacPy.verify(raw_body, PRODAMUS_SECRET_KEY, header_signature)
-
+        sig_debug = {
+            "header_signature": header_signature,
+            "hmac_signature": hmac_signature,
+            "hmac_valid": hmac_valid,
+        }
         _agent_debug_log_prodamus(
             "H5",
             "main.py:prodamus_webhook",
-            "signature comparison",
-            {
-                "calculated_signature": calculated_signature,
-                "header_signature": header_signature,
-                "hmacpy_signature": hmacpy_signature,
-                "hmacpy_valid": hmacpy_valid,
-            },
+            "signature comparison (HmacPy only)",
+            sig_debug,
         )
 
-        # Trust the HmacPy reference implementation as the source of truth.
-        # If it says the signature is valid, we accept the webhook even if
-        # our older helper (prodamus_sign) disagrees.
-        if not hmacpy_valid:
+        # Принимаем вебхук только если подпись валидна по HmacPy
+        if not hmac_valid:
             print("[prodamus_webhook] Signature mismatch (HmacPy invalid)")
             _agent_debug_log_prodamus(
                 "H5",
                 "main.py:prodamus_webhook",
                 "signature mismatch",
-                {"calculated_signature": calculated_signature},
+                sig_debug,
             )
             return "INVALID SIGNATURE", 403
 
