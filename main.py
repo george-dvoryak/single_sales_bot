@@ -30,6 +30,7 @@ try:
         WEBHOOK_PATH,
         WEBHOOK_SECRET_TOKEN,
         ADMIN_IDS,
+        PRODAMUS_SECRET_KEY,
     )
     _debug_log("main.py", "Config imported successfully")
 except Exception as e:
@@ -43,6 +44,9 @@ try:
     from utils.channel import check_course_channels
     from google_sheets import get_courses_data, get_texts_data
     from utils.images import preload_images_for_bot
+    from payments.hmac_prodamus import HmacPy
+    from db import add_purchase, add_user, has_active_subscription
+    from utils.text_utils import strip_html
     _debug_log("main.py", "Handlers and utilities imported successfully")
 except Exception as e:
     print(f"[main.py] ERROR importing handlers/utilities: {e}")
@@ -175,6 +179,193 @@ def _webhook():
         
     except Exception as e:
         print(f"[webhook] FATAL ERROR: {e}")
+        traceback.print_exc()
+        return "ERROR", 500
+
+
+def build_post_data_string(data: object) -> str:
+    """
+    Собираем строку post_data ТОЧНО так же,
+    как это делает HmacPy внутри (php json_encode + сортировка и т.д.).
+    """
+    array_data = HmacPy._php_array_cast(data)
+    array_data = HmacPy._to_str_values(array_data)
+    array_data = HmacPy._sort_recursive(array_data)
+    post_data = HmacPy._php_json_encode_unicode(array_data)
+    return post_data
+
+
+@application.post("/prodamus_webhook")
+def _prodamus_webhook():
+    """Prodamus webhook endpoint with signature verification"""
+    try:
+        print("[prodamus_webhook] Received POST request")
+        
+        # 1. Подпись из заголовка
+        sign_from_header = request.headers.get("Sign")
+        if not sign_from_header:
+            print("[prodamus_webhook] ERROR: Missing Sign header")
+            abort(400, "Missing Sign header")
+        
+        if not PRODAMUS_SECRET_KEY:
+            print("[prodamus_webhook] ERROR: PRODAMUS_SECRET_KEY not configured")
+            abort(500, "Prodamus secret key not configured")
+        
+        # 2. Достаём данные из тела запроса в том же виде, как их бы видел PHP
+        content_type = (request.content_type or "").split(";")[0].strip()
+        if content_type == "application/json":
+            # Prodamus может прислать JSON
+            data_for_sign = request.get_json(force=True, silent=False)
+        else:
+            # В твоём скрине content-type: application/x-www-form-urlencoded
+            # => берём обычную форму (аналог $_POST в PHP)
+            form_dict = request.form.to_dict(flat=True)
+            # В Prodamus поле products часто приходит JSON‑строкой.
+            # В твоём эталонном post_data это массив объектов,
+            # поэтому декодируем:
+            if "products" in form_dict:
+                try:
+                    form_dict["products"] = json.loads(form_dict["products"])
+                except Exception:
+                    # если вдруг это не JSON, просто оставляем строку
+                    pass
+            data_for_sign = form_dict
+        
+        # 3. Строка post_data в ТОЧНО таком формате, как в примере
+        post_data = build_post_data_string(data_for_sign)
+        
+        # 4. Проверяем подпись по той же логике, что в твоём примере
+        is_valid = HmacPy.verify(post_data, PRODAMUS_SECRET_KEY, sign_from_header)
+        if not is_valid:
+            print(f"[prodamus_webhook] ERROR: Invalid signature. Sign header: {sign_from_header[:20]}...")
+            print(f"[prodamus_webhook] Post data (first 200 chars): {post_data[:200]}...")
+            abort(403, "Invalid signature")
+        
+        # 5. Дальше работаем с данными: распарсим JSON‑строку для удобства
+        payload = json.loads(post_data)
+        
+        print(f"[prodamus_webhook] Signature verified. Payment status: {payload.get('payment_status')}")
+        
+        # 6. Обработка успешной оплаты
+        if payload.get("payment_status") == "success":
+            order_num = payload.get("order_num", "")
+            order_id = payload.get("order_id", "")
+            customer_email = payload.get("customer_email", "")
+            sum_amount = payload.get("sum", "0")
+            
+            print(f"[prodamus_webhook] Processing successful payment: order_num={order_num}, order_id={order_id}")
+            
+            # Парсим order_num в формате "user_id:course_id"
+            # Например: "466513805:1" -> user_id=466513805, course_id=1
+            if ":" in order_num:
+                try:
+                    parts = order_num.split(":", 1)
+                    user_id = int(parts[0])
+                    course_id = parts[1]
+                    
+                    # Получаем данные курса
+                    try:
+                        courses = get_courses_data()
+                    except Exception as e:
+                        print(f"[prodamus_webhook] ERROR: Could not fetch courses: {e}")
+                        courses = []
+                    
+                    course = next((x for x in courses if str(x.get("id")) == str(course_id)), None)
+                    if not course:
+                        print(f"[prodamus_webhook] ERROR: Course {course_id} not found")
+                        return "OK", 200  # Return OK to Prodamus even if course not found
+                    
+                    course_name = course.get("name", f"ID {course_id}")
+                    duration_days = int(course.get("duration_days", 0)) if course else 0
+                    channel = str(course.get("channel", "")) if course else ""
+                    
+                    # Проверяем, нет ли уже активной подписки
+                    if has_active_subscription(user_id, str(course_id)):
+                        print(f"[prodamus_webhook] User {user_id} already has active subscription for course {course_id}")
+                        return "OK", 200
+                    
+                    # Добавляем пользователя в БД если его нет
+                    try:
+                        add_user(user_id, None)
+                    except Exception:
+                        pass  # User might already exist
+                    
+                    # Добавляем покупку
+                    expiry_ts = add_purchase(
+                        user_id,
+                        str(course_id),
+                        course_name,
+                        channel,
+                        duration_days,
+                        payment_id=f"prodamus_{order_id}"
+                    )
+                    
+                    # Создаём пригласительную ссылку в канал
+                    invite_link = None
+                    if channel:
+                        try:
+                            invite = bot.create_chat_invite_link(chat_id=channel, member_limit=1, expire_date=None)
+                            invite_link = invite.invite_link
+                        except Exception as e:
+                            print(f"[prodamus_webhook] create_chat_invite_link failed for {channel}: {e}")
+                    
+                    # Получаем тексты для сообщений
+                    try:
+                        texts = get_texts_data()
+                    except Exception:
+                        texts = {}
+                    
+                    clean_course_name = strip_html(course_name) if course_name else f"ID {course_id}"
+                    purchase_success_msg = texts.get("purchase_success_message", 
+                        "Оплата успешно выполнена! Вам предоставлен доступ к курсу {course_name}.")
+                    text = purchase_success_msg.format(course_name=clean_course_name)
+                    
+                    if invite_link:
+                        text += "\nНажмите кнопку ниже, чтобы перейти к материалам курса."
+                    
+                    purchase_receipt_msg = texts.get("purchase_receipt_message", 
+                        "Чек об оплате будет отправлен на ваш email в системе Prodamus.")
+                    text += f"\n\n{purchase_receipt_msg}"
+                    
+                    # Отправляем сообщение пользователю
+                    try:
+                        if invite_link:
+                            kb = telebot.types.InlineKeyboardMarkup()
+                            kb.add(telebot.types.InlineKeyboardButton("Перейти в канал курса", url=invite_link))
+                            bot.send_message(user_id, text, reply_markup=kb)
+                        else:
+                            bot.send_message(user_id, text)
+                        print(f"[prodamus_webhook] Success message sent to user {user_id}")
+                    except Exception as e:
+                        print(f"[prodamus_webhook] ERROR sending message to user {user_id}: {e}")
+                    
+                    # Уведомляем админов
+                    try:
+                        amount = float(sum_amount) if sum_amount else 0.0
+                        clean_course_name = strip_html(course_name) if course_name else f"ID {course_id}"
+                        admin_text = f"💰 Оплата (Prodamus): пользователь {user_id} купил {clean_course_name} на сумму {amount:.2f} RUB."
+                        if customer_email:
+                            admin_text += f"\nEmail: {customer_email}"
+                        admin_text += f"\nOrder ID: {order_id}"
+                        for aid in ADMIN_IDS:
+                            try:
+                                bot.send_message(aid, admin_text)
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        print(f"[prodamus_webhook] ERROR notifying admins: {e}")
+                    
+                except (ValueError, IndexError) as e:
+                    print(f"[prodamus_webhook] ERROR parsing order_num '{order_num}': {e}")
+                    return "OK", 200  # Return OK to Prodamus even if parsing fails
+            else:
+                print(f"[prodamus_webhook] WARNING: order_num '{order_num}' does not contain ':' separator")
+        
+        # Prodamus обычно ждёт просто 200 OK
+        return "OK", 200
+        
+    except Exception as e:
+        print(f"[prodamus_webhook] FATAL ERROR: {e}")
         traceback.print_exc()
         return "ERROR", 500
 
