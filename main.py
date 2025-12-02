@@ -246,29 +246,66 @@ def prodamus_webhook():
                 "H2",
                 "main.py:prodamus_webhook",
                 "no raw body",
-                {},
+                {
+                    "content_type": request.content_type,
+                    "content_length": request.content_length,
+                    "headers": dict(request.headers),
+                },
             )
+            print("[prodamus_webhook] ERROR: no raw body")
             return "NO DATA", 400
 
         _agent_debug_log_prodamus(
             "H2",
             "main.py:prodamus_webhook",
             "raw body read",
-            {"length": len(raw_body)},
+            {
+                "length": len(raw_body),
+                "preview": raw_body[:500],
+            },
         )
+        print("[prodamus_webhook] Raw body length:", len(raw_body))
+        print("[prodamus_webhook] Raw body preview:", raw_body[:500])
 
-        # Try to parse JSON payload
+        # Try to parse JSON payload (main expected format)
         try:
             data = json.loads(raw_body)
         except Exception as e:
+            # Fallback: let Flask try to parse JSON, and log everything we can
+            alt_data = None
+            try:
+                alt_data = request.get_json(silent=True)
+            except Exception as e2:
+                alt_data = None
+
+            debug_payload = {
+                "error": str(e),
+                "raw_body_preview": raw_body[:500],
+                "raw_body_repr_prefix": repr(raw_body[:200]),
+                "content_type": request.content_type,
+                "content_length": request.content_length,
+                "headers": dict(request.headers),
+            }
+            if alt_data is not None:
+                debug_payload["alt_get_json_type"] = str(type(alt_data))
+                debug_payload["alt_get_json_value"] = alt_data
+
             _agent_debug_log_prodamus(
                 "H3",
                 "main.py:prodamus_webhook",
                 "json parse error",
-                {"error": str(e)},
+                debug_payload,
             )
             print("[prodamus_webhook] JSON parse error:", e)
-            return "BAD JSON", 400
+            print("[prodamus_webhook] Raw body (first 500 chars):", raw_body[:500])
+            print("[prodamus_webhook] Content-Type:", request.content_type)
+
+            # If Flask still managed to parse JSON into dict, use that
+            if isinstance(alt_data, dict):
+                data = alt_data
+                print("[prodamus_webhook] Using alt_data from request.get_json")
+            else:
+                return "BAD JSON", 400
 
         if not isinstance(data, dict):
             _agent_debug_log_prodamus(
