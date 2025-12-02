@@ -57,10 +57,10 @@ def register_handlers(bot):
         if edit_message:
             # When going back to catalog, always delete old message and send new one
             # This ensures the image updates correctly (can't change photo in existing message)
-                try:
-                    bot.delete_message(chat_id=edit_chat_id, message_id=edit_message_id)
-                except Exception:
-                    pass  # If deletion fails (e.g., message too old), continue anyway
+            try:
+                bot.delete_message(chat_id=edit_chat_id, message_id=edit_message_id)
+            except Exception:
+                pass  # If deletion fails (e.g., message too old), continue anyway
             # Send new catalog message
             try:
                 if banner_url:
