@@ -7,7 +7,7 @@ helpers to resolve a URL to a local file path when sending photos.
 
 import hashlib
 import os
-from typing import Dict, Iterable, Optional
+from typing import Dict, Optional
 
 import requests
 
@@ -20,6 +20,27 @@ _IMAGE_CACHE: Dict[str, str] = {}
 def _ensure_dir_exists() -> None:
     """Ensure the image cache directory exists."""
     os.makedirs(IMAGES_DIR, exist_ok=True)
+
+
+def _normalize_url(url: str) -> str:
+    """Normalize known CDN patterns (e.g. GitHub blob URLs) to direct image URLs."""
+    if not url:
+        return url
+    # Handle GitHub blob URLs -> raw.githubusercontent.com
+    # Example:
+    # https://github.com/user/repo/blob/main/path.jpg?raw=true
+    # -> https://raw.githubusercontent.com/user/repo/main/path.jpg
+    if "github.com" in url and "/blob/" in url:
+        try:
+            # Strip query/fragment
+            base = url.split("?", 1)[0].split("#", 1)[0]
+            parts = base.split("github.com/", 1)[1].split("/blob/", 1)
+            user_repo = parts[0]          # user/repo
+            rest = parts[1]               # branch/path
+            return f"https://raw.githubusercontent.com/{user_repo}/{rest}"
+        except Exception:
+            return url
+    return url
 
 
 def _filename_for_url(url: str) -> str:
@@ -41,11 +62,13 @@ def _download_image(url: str) -> Optional[str]:
     if not url:
         return None
 
+    normalized_url = _normalize_url(url)
+
     if url in _IMAGE_CACHE and os.path.exists(_IMAGE_CACHE[url]):
         return _IMAGE_CACHE[url]
 
     _ensure_dir_exists()
-    filename = _filename_for_url(url)
+    filename = _filename_for_url(normalized_url)
     local_path = os.path.join(IMAGES_DIR, filename)
 
     # If file already exists on disk (e.g. from previous run), trust it
@@ -54,7 +77,7 @@ def _download_image(url: str) -> Optional[str]:
         return local_path
 
     try:
-        resp = requests.get(url, timeout=15)
+        resp = requests.get(normalized_url, timeout=15)
         resp.raise_for_status()
         with open(local_path, "wb") as f:
             f.write(resp.content)
