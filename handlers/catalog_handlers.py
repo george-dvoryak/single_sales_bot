@@ -139,7 +139,7 @@ def register_handlers(bot):
         clean_desc = strip_html(desc) if desc else ""
         text = f"{formatted_name}\n{clean_desc}\n\nЦена: {price} руб.\nДоступ: {duration} мин."
         
-        # Use the create_course_buttons function to get payment buttons (supports ProDAMUS)
+        # Use the create_course_buttons function to get payment buttons
         ikb = create_course_buttons(course_id)
         
         # Try to edit existing message first, then fallback to sending new message

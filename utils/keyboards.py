@@ -26,17 +26,9 @@ def get_main_menu_keyboard(user_id: int) -> types.ReplyKeyboardMarkup:
 
 
 def create_course_buttons(course_id: str) -> types.InlineKeyboardMarkup:
-    """Create payment buttons for a course"""
-    from config import ENABLE_PRODAMUS
-    
+    """Create payment buttons for a course (YooKassa only)"""
     ikb = types.InlineKeyboardMarkup()
-    
-    # If ProDAMUS is enabled, show payment method selection
-    if ENABLE_PRODAMUS:
-        ikb.add(types.InlineKeyboardButton("💳 YooKassa (Telegram)", callback_data=f"pay_yk_{course_id}"))
-        ikb.add(types.InlineKeyboardButton("💰 ProDAMUS", callback_data=f"pay_pd_{course_id}"))
-    else:
-        ikb.add(types.InlineKeyboardButton("Купить", callback_data=f"pay_yk_{course_id}"))
+    ikb.add(types.InlineKeyboardButton("Купить", callback_data=f"pay_yk_{course_id}"))
     
     ikb.add(types.InlineKeyboardButton("⬅️ Назад к каталогу", callback_data="back_to_catalog"))
     return ikb

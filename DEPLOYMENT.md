@@ -46,11 +46,7 @@ USE_WEBHOOK=True
 WEBHOOK_HOST=ysingle-goshadvoryak.pythonanywhere.com
 WEBHOOK_SECRET_TOKEN=my_secret_random_string_12345
 
-# Optional: Enable ProDAMUS as a second payment method
-ENABLE_PRODAMUS=false
-PRODAMUS_TEST_MODE=true
-PRODAMUS_PAYFORM_URL=https://demo.payform.ru
-PRODAMUS_SECRET_KEY=your_secret_key_here
+# Database
 ```
 
 **Important Notes:**
@@ -230,12 +226,6 @@ DATABASE_PATH=bot.db
 GSHEET_ID=your_sheet_id
 ADMIN_IDS=your_telegram_id
 USE_WEBHOOK=False
-
-# Optional: Enable ProDAMUS as a second payment method
-ENABLE_PRODAMUS=false
-PRODAMUS_TEST_MODE=true
-PRODAMUS_PAYFORM_URL=https://demo.payform.ru
-PRODAMUS_SECRET_KEY=your_secret_key_here
 ```
 
 ### 3. Run Bot
@@ -270,42 +260,4 @@ cd ~/single_sales_bot
 git pull
 # Reload web app in PythonAnywhere
 ```
-
-## ProDAMUS Configuration (Optional)
-
-If you want to enable ProDAMUS as a second payment method:
-
-### 1. Set Environment Variables
-
-In your `.env` file:
-```env
-ENABLE_PRODAMUS=true
-PRODAMUS_TEST_MODE=true  # Set to false for production
-PRODAMUS_PAYFORM_URL=https://yourshop.payform.ru
-PRODAMUS_SECRET_KEY=your_secret_key_from_prodamus_dashboard
-```
-
-### 2. Configure Webhook in ProDAMUS Dashboard
-
-Set the webhook URL in your ProDAMUS account settings:
-```
-https://yourusername.pythonanywhere.com/prodamus_webhook
-```
-
-### 3. How ProDAMUS Works
-
-When a user selects ProDAMUS payment:
-1. Bot asks for their email address
-2. Bot generates a payment link and follows redirect to get short URL
-3. User receives a short payment link like `https://demo.payform.ru/p/abc123`
-4. After payment, ProDAMUS sends webhook notification to your server
-5. Bot verifies webhook signature and grants/denies access based on payment status
-
-### 4. Testing ProDAMUS Integration
-
-1. Enable test mode: `PRODAMUS_TEST_MODE=true`
-2. Use ProDAMUS test payment form URL
-3. Make a test purchase through the bot
-4. Check bot logs for webhook notifications
-5. Verify that access is granted after successful payment
 

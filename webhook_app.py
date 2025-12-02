@@ -24,10 +24,6 @@ except Exception as e:
     def error_root():
         return error_msg, 500
     
-    @application.route("/prodamus_webhook", methods=["GET", "POST"])
-    def error_prodamus():
-        return error_msg, 500
-    
     @application.route("/diag")
     def error_diag():
         return error_msg, 500
