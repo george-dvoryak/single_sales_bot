@@ -231,18 +231,19 @@ def _prodamus_webhook():
                     pass
             data_for_sign = form_dict
         
-        # 3. Строка post_data в ТОЧНО таком формате, как в примере
-        post_data = build_post_data_string(data_for_sign)
-        
-        # 4. Проверяем подпись по той же логике, что в твоём примере
-        is_valid = HmacPy.verify(post_data, PRODAMUS_SECRET_KEY, sign_from_header)
+        # 3. Проверяем подпись, передавая исходные данные (dict/list)
+        # HmacPy.verify() сам выполнит преобразование (php_array_cast, to_str_values, sort_recursive, json_encode)
+        is_valid = HmacPy.verify(data_for_sign, PRODAMUS_SECRET_KEY, sign_from_header)
         if not is_valid:
+            # Для отладки: строим post_data строку для логирования
+            post_data_debug = build_post_data_string(data_for_sign)
             print(f"[prodamus_webhook] ERROR: Invalid signature. Sign header: {sign_from_header[:20]}...")
-            print(f"[prodamus_webhook] Post data (first 200 chars): {post_data[:200]}...")
+            print(f"[prodamus_webhook] Post data (first 200 chars): {post_data_debug[:200]}...")
             abort(403, "Invalid signature")
         
-        # 5. Дальше работаем с данными: распарсим JSON‑строку для удобства
-        payload = json.loads(post_data)
+        # 4. Используем исходные данные напрямую (уже проверены)
+        # Если нужно работать с данными как со словарём, используем data_for_sign
+        payload = data_for_sign
         
         print(f"[prodamus_webhook] Signature verified. Payment status: {payload.get('payment_status')}")
         
