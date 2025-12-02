@@ -37,14 +37,20 @@ def register_handlers(bot):
             if welcome_image_url:
                 local_path = get_local_image_path(welcome_image_url)
                 if local_path:
-                    with open(local_path, "rb") as photo:
-                        bot.send_photo(user_id, photo, caption=WELCOME_MSG, reply_markup=keyboard)
+                    try:
+                        with open(local_path, "rb") as photo:
+                            bot.send_photo(user_id, photo, caption=WELCOME_MSG, reply_markup=keyboard)
+                    except Exception as e:
+                        print(f"[basic_handlers] send_photo local welcome image failed: {e}")
+                        # Fallback to URL if local file send fails
+                        bot.send_photo(user_id, welcome_image_url, caption=WELCOME_MSG, reply_markup=keyboard)
                 else:
                     # Fallback to sending by URL if cache/download failed
                     bot.send_photo(user_id, welcome_image_url, caption=WELCOME_MSG, reply_markup=keyboard)
             else:
                 bot.send_message(user_id, WELCOME_MSG, reply_markup=keyboard)
-        except Exception:
+        except Exception as e:
+            print(f"[basic_handlers] send_photo welcome failed, fallback to text: {e}")
             bot.send_message(user_id, WELCOME_MSG, reply_markup=keyboard)
 
     @bot.message_handler(func=lambda m: m.text == "Активные подписки")

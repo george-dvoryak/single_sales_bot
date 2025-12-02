@@ -66,13 +66,18 @@ def register_handlers(bot):
                 if banner_url:
                     local_path = get_local_image_path(banner_url)
                     if local_path:
-                        with open(local_path, "rb") as photo:
-                            bot.send_photo(user_id, photo, caption=caption, reply_markup=kb)
+                        try:
+                            with open(local_path, "rb") as photo:
+                                bot.send_photo(user_id, photo, caption=caption, reply_markup=kb)
+                        except Exception as e:
+                            print(f"[catalog_handlers] send_photo local catalog banner failed: {e}")
+                            bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
                     else:
                         bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
                 else:
                     bot.send_message(user_id, caption, reply_markup=kb)
-            except Exception:
+            except Exception as e:
+                print(f"[catalog_handlers] send catalog banner failed, fallback to text: {e}")
                 bot.send_message(user_id, caption, reply_markup=kb)
         else:
             # Send new message
@@ -80,13 +85,18 @@ def register_handlers(bot):
                 if banner_url:
                     local_path = get_local_image_path(banner_url)
                     if local_path:
-                        with open(local_path, "rb") as photo:
-                            bot.send_photo(user_id, photo, caption=caption, reply_markup=kb)
+                        try:
+                            with open(local_path, "rb") as photo:
+                                bot.send_photo(user_id, photo, caption=caption, reply_markup=kb)
+                        except Exception as e:
+                            print(f"[catalog_handlers] send_photo local catalog banner (no-edit) failed: {e}")
+                            bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
                     else:
                         bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
                 else:
                     bot.send_message(user_id, caption, reply_markup=kb)
-            except Exception:
+            except Exception as e:
+                print(f"[catalog_handlers] send catalog banner (no-edit) failed, fallback to text: {e}")
                 bot.send_message(user_id, caption, reply_markup=kb)
 
     @bot.message_handler(func=lambda m: m.text == "Каталог")
@@ -179,8 +189,12 @@ def register_handlers(bot):
                 # Send new photo (either because original wasn't photo, or edit/delete failed)
                 local_path = get_local_image_path(image_url)
                 if local_path:
-                    with open(local_path, "rb") as photo:
-                        bot.send_photo(user_id, photo, caption=text, reply_markup=ikb)
+                    try:
+                        with open(local_path, "rb") as photo:
+                            bot.send_photo(user_id, photo, caption=text, reply_markup=ikb)
+                    except Exception as e:
+                        print(f"[catalog_handlers] send_photo local course image failed: {e}")
+                        bot.send_photo(user_id, image_url, caption=text, reply_markup=ikb)
                 else:
                     bot.send_photo(user_id, image_url, caption=text, reply_markup=ikb)
                 message_sent = True
