@@ -119,7 +119,7 @@ class ProdamusHmac:
 
     @staticmethod
     def _escape_json_string_php(s: str) -> str:
-        """
+        r"""
         Экранирование строки примерно как у PHP json_encode:
         - Unicode не экранируем (\uXXXX) (UNESCAPED_UNICODE)
         - Но экранируем ", \, / и управляющие символы.
