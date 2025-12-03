@@ -9,9 +9,7 @@ from db import (
     create_prodamus_payment, update_prodamus_payment_url
 )
 from payments.yookassa import create_invoice, send_receipt_to_tax
-from payments.prodamus import (
-    generate_order_id, generate_order_num, build_payment_link, get_payment_url
-)
+from payments.prodamus import generate_order_num, build_payment_link, get_payment_url
 from utils.text_utils import strip_html
 from config import ADMIN_IDS, CURRENCY
 
@@ -286,18 +284,14 @@ def register_handlers(bot):
         course_name = course.get("name", "Курс")
         price = float(course.get("price", 0))
         
-        # Generate order_id and order_num
+        # Generate order_num in format userId_courseId_timestamp and use it as our main identifier
         order_num = generate_order_num(user_id, course_id)
-        
-        # Try to create order_id, increment attempt if needed
-        attempt = 0
-        order_id = generate_order_id(user_id, course_id, attempt)
-        while not create_prodamus_payment(order_id, user_id, course_id, email, order_num):
-            attempt += 1
-            order_id = generate_order_id(user_id, course_id, attempt)
-            if attempt > 10:  # Safety limit
-                bot.send_message(user_id, "Ошибка: не удалось создать заказ. Попробуйте позже.")
-                return
+        order_id = order_num  # store the same value in order_id column for simplicity
+
+        # Try to create payment record once; if DB is locked or duplicate, show error
+        if not create_prodamus_payment(order_id, user_id, course_id, email, order_num):
+            bot.send_message(user_id, "Ошибка: не удалось создать заказ. Попробуйте позже.")
+            return
         
         # Build payment link
         customer_phone = ""  # Optional, can be empty

@@ -47,7 +47,7 @@ try:
     from utils.channel import check_course_channels
     from google_sheets import get_courses_data, get_texts_data
     from utils.images import preload_images_for_bot
-    from db import update_prodamus_payment_status, get_prodamus_payment, get_user
+    from db import update_prodamus_payment_status, get_user
     _debug_log("main.py", "Handlers and utilities imported successfully")
 except Exception as e:
     print(f"[main.py] ERROR importing handlers/utilities: {e}")
@@ -370,14 +370,14 @@ def _prodamus_webhook():
         print("[prodamus_webhook] Signature verified successfully")
         print(f"[prodamus_webhook] Payment status: {payload.get('payment_status')}")
         
-        # 10. Update payment status in database
+        # 10. Update payment status in database (use our business order_num as key)
         order_id = payload.get("order_id", "")
         order_num = payload.get("order_num", "")
         payment_status = payload.get("payment_status", "")
         
-        if order_id:
+        if order_num:
             try:
-                update_prodamus_payment_status(order_id, payment_status)
+                update_prodamus_payment_status(order_num, payment_status)
             except Exception as e:
                 print(f"[prodamus_webhook] ERROR updating payment status: {e}")
         
@@ -390,27 +390,20 @@ def _prodamus_webhook():
             
             print(f"[prodamus_webhook] Processing successful payment: order_num={order_num}, order_id={order_id}")
             
-            # Парсим order_num в формате "user_id:course_id"
-            # Например: "466513805:1" -> user_id=466513805, course_id=1
+            # Парсим order_num в формате "user_id_course_id_timestamp"
+            # Например: "466513805_2_1764770302" -> user_id=466513805, course_id=2
             original_order_num = order_num
 
-            # Если в order_num нет двоеточия (как в текущем логе), пробуем восстановить из БД по order_id
-            if ":" not in order_num and order_id:
-                try:
-                    db_payment = get_prodamus_payment(order_id)
-                    if db_payment is not None and "order_num" in db_payment.keys():
-                        restored_num = db_payment["order_num"]
-                        print(f"[prodamus_webhook] Restored order_num from DB by order_id={order_id}: {restored_num}")
-                        order_num = restored_num or order_num
-                except Exception as e:
-                    print(f"[prodamus_webhook] ERROR restoring order_num from DB for order_id={order_id}: {e}")
+            try:
+                user_id_str, course_id_str, _ts = order_num.split("_", 2)
+                user_id = int(user_id_str)
+                course_id = course_id_str
+            except Exception as e:
+                print(f"[prodamus_webhook] ERROR parsing order_num '{order_num}' as user_id_course_id_timestamp: {e}")
+                return "OK", 200
 
-            if ":" in order_num:
+            if user_id and course_id:
                 try:
-                    parts = order_num.split(":", 1)
-                    user_id = int(parts[0])
-                    course_id = parts[1]
-                    
                     # Получаем данные курса
                     try:
                         courses = get_courses_data()
@@ -472,13 +465,8 @@ def _prodamus_webhook():
                     )
                     
                 except (ValueError, IndexError) as e:
-                    print(f"[prodamus_webhook] ERROR parsing order_num '{order_num}': {e}")
+                    print(f"[prodamus_webhook] ERROR while handling successful payment for order_num '{order_num}': {e}")
                     return "OK", 200  # Return OK to Prodamus even if parsing fails
-            else:
-                print(
-                    f"[prodamus_webhook] WARNING: order_num '{order_num}' does not contain ':' separator "
-                    f"(original value: '{original_order_num}'). Cannot derive user_id and course_id."
-                )
         
         # 12. Обработка неуспешной оплаты (sign verified but payment_status != 'success')
         elif payment_status and payment_status != "success":

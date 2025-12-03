@@ -8,21 +8,14 @@ from typing import Optional
 from config import PRODAMUS_BASE_URL
 
 
-def generate_order_id(user_id: int, course_id: str, attempt: int = 0) -> str:
-    """
-    Generate unique order_id for Prodamus payment.
-    Format: user_id_course_id_timestamp_attempt
-    """
-    timestamp = int(time.time())
-    return f"{user_id}_{course_id}_{timestamp}_{attempt}"
-
-
 def generate_order_num(user_id: int, course_id: str) -> str:
     """
     Generate order_num for Prodamus payment.
-    Format: user_id:course_id (used in webhook to identify user and course)
+    Format: user_id_course_id_timestamp (only digits and underscores),
+    used in webhook to identify user and course.
     """
-    return f"{user_id}:{course_id}"
+    timestamp = int(time.time())
+    return f"{user_id}_{course_id}_{timestamp}"
 
 
 def build_payment_link(
@@ -43,6 +36,7 @@ def build_payment_link(
     base_url = PRODAMUS_BASE_URL.rstrip('/')
     
     params = {
+        # Prodamus will echo order_num back in webhook, we use it as main identifier
         'order_id': order_id,
         'order_num': order_num,
         'customer_email': customer_email,
