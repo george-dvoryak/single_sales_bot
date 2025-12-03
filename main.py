@@ -419,32 +419,34 @@ def _prodamus_webhook():
                     channel = str(course.get("channel", "")) if course else ""
                     
                     # Проверяем, нет ли уже активной подписки
-                    if has_active_subscription(user_id, str(course_id)):
+                    already_has_access = has_active_subscription(user_id, str(course_id))
+                    if already_has_access:
                         print(f"[prodamus_webhook] User {user_id} already has active subscription for course {course_id}")
-                        return "OK", 200
+                    else:
+                        # Добавляем пользователя в БД если его нет
+                        try:
+                            add_user(user_id, None)
+                        except Exception:
+                            pass  # User might already exist
+                        
+                        # Добавляем покупку
+                        expiry_ts = add_purchase(
+                            user_id,
+                            str(course_id),
+                            course_name,
+                            channel,
+                            duration_days,
+                            payment_id=f"prodamus_{order_id}"
+                        )
+                        print(f"[prodamus_webhook] Purchase added for user {user_id}, course {course_id}, expiry: {expiry_ts}")
                     
-                    # Добавляем пользователя в БД если его нет
-                    try:
-                        add_user(user_id, None)
-                    except Exception:
-                        pass  # User might already exist
-                    
-                    # Добавляем покупку
-                    expiry_ts = add_purchase(
-                        user_id,
-                        str(course_id),
-                        course_name,
-                        channel,
-                        duration_days,
-                        payment_id=f"prodamus_{order_id}"
-                    )
-                    
-                    # Создаём пригласительную ссылку в канал
+                    # Создаём пригласительную ссылку в канал (всегда, даже если уже есть доступ)
                     invite_link = None
                     if channel:
                         try:
                             invite = bot.create_chat_invite_link(chat_id=channel, member_limit=1, expire_date=None)
                             invite_link = invite.invite_link
+                            print(f"[prodamus_webhook] Invite link created: {invite_link}")
                         except Exception as e:
                             print(f"[prodamus_webhook] create_chat_invite_link failed for {channel}: {e}")
                     
@@ -466,17 +468,19 @@ def _prodamus_webhook():
                         "Чек об оплате будет отправлен на ваш email в системе Prodamus.")
                     text += f"\n\n{purchase_receipt_msg}"
                     
-                    # Отправляем сообщение пользователю
+                    # Отправляем сообщение пользователю (точно так же, как в YooKassa)
                     try:
                         if invite_link:
                             kb = telebot.types.InlineKeyboardMarkup()
                             kb.add(telebot.types.InlineKeyboardButton("Перейти в канал курса", url=invite_link))
                             bot.send_message(user_id, text, reply_markup=kb)
+                            print(f"[prodamus_webhook] Success message with invite link sent to user {user_id}")
                         else:
                             bot.send_message(user_id, text)
-                        print(f"[prodamus_webhook] Success message sent to user {user_id}")
+                            print(f"[prodamus_webhook] Success message (no invite link) sent to user {user_id}")
                     except Exception as e:
                         print(f"[prodamus_webhook] ERROR sending message to user {user_id}: {e}")
+                        traceback.print_exc()
                     
                     # Уведомляем админов
                     try:
