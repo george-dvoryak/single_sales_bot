@@ -7,6 +7,9 @@ Main entry point for the bot (polling or webhook mode)
 import time
 import traceback
 import json
+import re
+import hmac
+import hashlib
 import telebot
 from flask import Flask, request, abort
 
@@ -44,7 +47,6 @@ try:
     from utils.channel import check_course_channels
     from google_sheets import get_courses_data, get_texts_data
     from utils.images import preload_images_for_bot
-    from payments.hmac_prodamus import HmacPy
     from db import add_purchase, add_user, has_active_subscription
     from utils.text_utils import strip_html
     _debug_log("main.py", "Handlers and utilities imported successfully")
@@ -183,16 +185,67 @@ def _webhook():
         return "ERROR", 500
 
 
-def build_post_data_string(data: object) -> str:
+def build_hmac_payload(flat_form: dict) -> dict:
     """
-    Собираем строку post_data ТОЧНО так же,
-    как это делает HmacPy внутри (php json_encode + сортировка и т.д.).
+    Из плоского dict с ключами вида 'products[0][name]'
+    собираем структуру как у PHP $_POST:
+    {
+        ...,
+        "products": [
+            {"name": "...", "price": "...", ...},
+            ...
+        ]
+    }
     """
-    array_data = HmacPy._php_array_cast(data)
-    array_data = HmacPy._to_str_values(array_data)
-    array_data = HmacPy._sort_recursive(array_data)
-    post_data = HmacPy._php_json_encode_unicode(array_data)
-    return post_data
+    base = {}
+    products_tmp = {}  # index -> dict полей продукта
+
+    for key, value in flat_form.items():
+        # Sign никогда не должен участвовать в подписи
+        if key == "Sign":
+            continue
+
+        m = re.match(r'^products\[(\d+)\]\[(.+)\]$', key)
+        if m:
+            idx = int(m.group(1))
+            field = m.group(2)
+            products_tmp.setdefault(idx, {})[field] = value
+        else:
+            base[key] = value
+
+    if products_tmp:
+        # Собираем список продуктов по индексу
+        base["products"] = [products_tmp[i] for i in sorted(products_tmp.keys())]
+
+    return base
+
+
+def stringify_recursive(obj):
+    """
+    Полный аналог array_walk_recursive + strval для PHP:
+    все значения (на всех уровнях) превращаем в строки.
+    """
+    if isinstance(obj, dict):
+        return {str(k): stringify_recursive(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [stringify_recursive(v) for v in obj]
+    elif obj is None:
+        return ""
+    else:
+        return str(obj)
+
+
+def sort_recursive(obj):
+    """Рекурсивная сортировка ключей словаря"""
+    if isinstance(obj, dict):
+        return {
+            key: sort_recursive(value)
+            for key, value in sorted(obj.items(), key=lambda item: item[0])
+        }
+    elif isinstance(obj, list):
+        return [sort_recursive(item) for item in obj]
+    else:
+        return obj
 
 
 @application.post("/prodamus_webhook")
@@ -202,8 +255,8 @@ def _prodamus_webhook():
         print("[prodamus_webhook] Received POST request")
         
         # 1. Подпись из заголовка
-        sign_from_header = request.headers.get("Sign")
-        if not sign_from_header:
+        provided_signature = str(request.headers.get("Sign", "")).strip()
+        if not provided_signature:
             print("[prodamus_webhook] ERROR: Missing Sign header")
             abort(400, "Missing Sign header")
         
@@ -211,43 +264,80 @@ def _prodamus_webhook():
             print("[prodamus_webhook] ERROR: PRODAMUS_SECRET_KEY not configured")
             abort(500, "Prodamus secret key not configured")
         
-        # 2. Достаём данные из тела запроса в том же виде, как их бы видел PHP
-        content_type = (request.content_type or "").split(";")[0].strip()
-        if content_type == "application/json":
-            # Prodamus может прислать JSON
-            data_for_sign = request.get_json(force=True, silent=False)
-        else:
-            # В твоём скрине content-type: application/x-www-form-urlencoded
-            # => берём обычную форму (аналог $_POST в PHP)
-            form_dict = request.form.to_dict(flat=True)
-            # В Prodamus поле products часто приходит JSON‑строкой.
-            # В твоём эталонном post_data это массив объектов,
-            # поэтому декодируем:
-            if "products" in form_dict:
-                try:
-                    form_dict["products"] = json.loads(form_dict["products"])
-                except Exception:
-                    # если вдруг это не JSON, просто оставляем строку
-                    pass
-            data_for_sign = form_dict
+        secret_key_bytes = PRODAMUS_SECRET_KEY.encode("utf-8")
         
-        # 3. Проверяем подпись, передавая исходные данные (dict/list)
-        # HmacPy.verify() сам выполнит преобразование (php_array_cast, to_str_values, sort_recursive, json_encode)
-        is_valid = HmacPy.verify(data_for_sign, PRODAMUS_SECRET_KEY, sign_from_header)
-        if not is_valid:
-            # Для отладки: строим post_data строку для логирования
-            post_data_debug = build_post_data_string(data_for_sign)
-            print(f"[prodamus_webhook] ERROR: Invalid signature. Sign header: {sign_from_header[:20]}...")
-            print(f"[prodamus_webhook] Post data (first 200 chars): {post_data_debug[:200]}...")
+        # 2. Достаём данные из тела запроса
+        content_type = (request.content_type or "").split(";")[0].strip()
+        
+        if content_type == "application/json":
+            # Если пришёл JSON, преобразуем в плоский dict для обработки
+            json_data = request.get_json(force=True, silent=False)
+            # Преобразуем JSON в форму для единообразной обработки
+            flat_form = {}
+            for key, value in json_data.items():
+                if key == "Sign":
+                    continue
+                if key == "products" and isinstance(value, list):
+                    # Разворачиваем products обратно в плоскую структуру
+                    for idx, product in enumerate(value):
+                        if isinstance(product, dict):
+                            for field, field_value in product.items():
+                                flat_form[f"products[{idx}][{field}]"] = field_value
+                else:
+                    flat_form[key] = value
+        else:
+            # application/x-www-form-urlencoded - берём плоский dict
+            flat_form = request.form.to_dict()
+        
+        print(f"[prodamus_webhook] Raw form (flat dict): {list(flat_form.keys())[:10]}...")
+        
+        # 3. Превращаем плоский dict в структуру как у PHP ($_POST)
+        payload = build_hmac_payload(flat_form)
+        print(f"[prodamus_webhook] Payload for HMAC (nested): {list(payload.keys())}")
+        
+        # 4. Рекурсивно приводим все значения к строкам
+        stringified = stringify_recursive(payload)
+        
+        # 5. Сортируем ключи рекурсивно
+        sorted_payload = sort_recursive(stringified)
+        
+        # 6. json_encode без экранирования юникода, но со стандартным экранированием '/'
+        json_string = json.dumps(
+            sorted_payload,
+            ensure_ascii=False,
+            separators=(',', ':')
+        )
+        
+        # 7. PHP json_encode по умолчанию экранирует '/', поэтому имитируем это
+        msg_to_sign = json_string.replace('/', r'\/')
+        
+        print(f"[prodamus_webhook] Final msg_to_sign (first 200 chars): {msg_to_sign[:200]}...")
+        
+        # 8. Вычисляем подпись
+        calculated_signature = hmac.new(
+            secret_key_bytes,
+            msg=msg_to_sign.encode("utf-8"),
+            digestmod=hashlib.sha256
+        ).hexdigest()
+        
+        print(f"[prodamus_webhook] Provided signature: {provided_signature[:20]}...")
+        print(f"[prodamus_webhook] Calculated signature: {calculated_signature[:20]}...")
+        
+        # 9. Сравниваем подписи
+        if not hmac.compare_digest(
+            provided_signature.lower(),
+            calculated_signature.lower()
+        ):
+            print(f"[prodamus_webhook] ERROR: Invalid signature!")
+            print(f"[prodamus_webhook] Provided: {provided_signature}")
+            print(f"[prodamus_webhook] Calculated: {calculated_signature}")
+            print(f"[prodamus_webhook] Message to sign (first 500 chars): {msg_to_sign[:500]}")
             abort(403, "Invalid signature")
         
-        # 4. Используем исходные данные напрямую (уже проверены)
-        # Если нужно работать с данными как со словарём, используем data_for_sign
-        payload = data_for_sign
+        print("[prodamus_webhook] Signature verified successfully")
+        print(f"[prodamus_webhook] Payment status: {payload.get('payment_status')}")
         
-        print(f"[prodamus_webhook] Signature verified. Payment status: {payload.get('payment_status')}")
-        
-        # 6. Обработка успешной оплаты
+        # 10. Обработка успешной оплаты
         if payload.get("payment_status") == "success":
             order_num = payload.get("order_num", "")
             order_id = payload.get("order_id", "")
