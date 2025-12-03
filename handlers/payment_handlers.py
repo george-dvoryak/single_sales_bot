@@ -193,10 +193,11 @@ def register_handlers(bot):
         text = "Для оплаты через Prodamus необходимо указать ваш email адрес.\n\nПожалуйста, отправьте ваш email:"
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
-        bot.send_message(user_id, text, reply_markup=kb)
+        msg = bot.send_message(user_id, text, reply_markup=kb)
         
-        # Register next step handler for email
-        bot.register_next_step_handler_by_chat_id(user_id, lambda m: handle_prodamus_email(bot, m, course_id))
+        # Register next step handler for email.
+        # Using register_next_step_handler with the sent message is more reliable in webhook mode.
+        bot.register_next_step_handler(msg, lambda m: handle_prodamus_email(bot, m, course_id))
 
     def handle_prodamus_email(bot, message: types.Message, course_id: str):
         """Handle email input for Prodamus payment"""
@@ -210,7 +211,8 @@ def register_handlers(bot):
             kb = types.InlineKeyboardMarkup()
             kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
             bot.send_message(user_id, text, reply_markup=kb)
-            bot.register_next_step_handler_by_chat_id(user_id, lambda m: handle_prodamus_email(bot, m, course_id))
+            # Re-register next step handler to wait for correct email
+            bot.register_next_step_handler(message, lambda m: handle_prodamus_email(bot, m, course_id))
             return
         
         try:
