@@ -13,6 +13,7 @@ from payments.prodamus import generate_order_num, build_payment_link, get_paymen
 from utils.text_utils import strip_html
 from utils.text_loader import get_text
 from utils.logger import log_info, log_error, log_warning
+from utils.user_state import set_user_state, get_user_state, clear_user_state, is_user_in_state
 from config import ADMIN_IDS, CURRENCY
 
 
@@ -239,32 +240,43 @@ def register_handlers(bot):
         
         bot.answer_callback_query(c.id)
         
+        # Set user state to waiting for email
+        set_user_state(user_id, "waiting_for_prodamus_email", {"course_id": course_id})
+        
         # Ask for email
         text = "Для оплаты через Prodamus необходимо указать ваш email адрес.\n\nПожалуйста, отправьте ваш email:"
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
         
         try:
-            msg = bot.send_message(user_id, text, reply_markup=kb)
-            # Register next step handler for email on the message we just sent
-            bot.register_next_step_handler(msg, lambda m: handle_prodamus_email(bot, m, course_id))
+            bot.send_message(user_id, text, reply_markup=kb)
         except Exception as e:
             log_error("payment_handlers", f"Error sending email request message: {e}")
+            clear_user_state(user_id)
             bot.send_message(user_id, "Ошибка при отправке сообщения. Попробуйте еще раз.")
 
-    def handle_prodamus_email(bot, message: types.Message, course_id: str):
-        """Handle email input for Prodamus payment"""
+    @bot.message_handler(func=lambda m: is_user_in_state(m.from_user.id, "waiting_for_prodamus_email"))
+    def handle_prodamus_email_message(message: types.Message):
+        """Handle email input for Prodamus payment - state-based handler"""
         user_id = message.from_user.id
+        user_state = get_user_state(user_id)
+        
+        if not user_state:
+            return  # State was cleared or doesn't exist
+        
+        course_id = user_state["data"].get("course_id")
+        if not course_id:
+            clear_user_state(user_id)
+            bot.send_message(user_id, "Ошибка: не удалось определить курс. Попробуйте начать заново.")
+            return
         
         # Check if message is text (ignore callbacks, photos, etc.)
         if message.content_type != 'text':
-            # If user sent non-text, ask again
             text = "Пожалуйста, отправьте ваш email адрес текстом:"
             kb = types.InlineKeyboardMarkup()
             kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
             try:
-                error_msg = bot.send_message(user_id, text, reply_markup=kb)
-                bot.register_next_step_handler(error_msg, lambda m: handle_prodamus_email(bot, m, course_id))
+                bot.send_message(user_id, text, reply_markup=kb)
             except Exception as e:
                 log_error("payment_handlers", f"Error in handle_prodamus_email (non-text): {e}")
             return
@@ -278,19 +290,22 @@ def register_handlers(bot):
             kb = types.InlineKeyboardMarkup()
             kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
             try:
-                # Send error message and register handler on the NEW message
-                error_msg = bot.send_message(user_id, text, reply_markup=kb)
-                # Re-register next step handler on the NEW error message
-                bot.register_next_step_handler(error_msg, lambda m: handle_prodamus_email(bot, m, course_id))
+                bot.send_message(user_id, text, reply_markup=kb)
             except Exception as e:
                 log_error("payment_handlers", f"Error sending validation error message: {e}")
-            return
+            return  # Keep state, wait for next message
         
+        # Email is valid, clear state and process payment
+        clear_user_state(user_id)
+        _process_prodamus_payment(bot, user_id, course_id, email, message)
+
+    def _process_prodamus_payment(bot, user_id: int, course_id: str, email: str, message: types.Message):
+        """Process Prodamus payment after email is validated"""
         # Get course data
         try:
             courses = get_courses_data()
         except Exception as e:
-            log_error("payment_handlers", f"Error fetching courses in handle_prodamus_email: {e}")
+            log_error("payment_handlers", f"Error fetching courses in _process_prodamus_payment: {e}")
             bot.send_message(user_id, "Ошибка: не удалось получить данные курса.")
             return
         
