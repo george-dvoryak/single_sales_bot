@@ -243,31 +243,54 @@ def register_handlers(bot):
         text = "Для оплаты через Prodamus необходимо указать ваш email адрес.\n\nПожалуйста, отправьте ваш email:"
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
-        msg = bot.send_message(user_id, text, reply_markup=kb)
         
-        # Register next step handler for email.
-        # Using register_next_step_handler with the sent message is more reliable in webhook mode.
-        bot.register_next_step_handler(msg, lambda m: handle_prodamus_email(bot, m, course_id))
+        try:
+            msg = bot.send_message(user_id, text, reply_markup=kb)
+            # Register next step handler for email on the message we just sent
+            bot.register_next_step_handler(msg, lambda m: handle_prodamus_email(bot, m, course_id))
+        except Exception as e:
+            log_error("payment_handlers", f"Error sending email request message: {e}")
+            bot.send_message(user_id, "Ошибка при отправке сообщения. Попробуйте еще раз.")
 
     def handle_prodamus_email(bot, message: types.Message, course_id: str):
         """Handle email input for Prodamus payment"""
         user_id = message.from_user.id
+        
+        # Check if message is text (ignore callbacks, photos, etc.)
+        if message.content_type != 'text':
+            # If user sent non-text, ask again
+            text = "Пожалуйста, отправьте ваш email адрес текстом:"
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
+            try:
+                error_msg = bot.send_message(user_id, text, reply_markup=kb)
+                bot.register_next_step_handler(error_msg, lambda m: handle_prodamus_email(bot, m, course_id))
+            except Exception as e:
+                log_error("payment_handlers", f"Error in handle_prodamus_email (non-text): {e}")
+            return
+        
         email = message.text.strip()
         
-        # Validate email
+        # Validate email format
         email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
         if not re.match(email_pattern, email):
             text = "❌ Неверный формат email адреса. Пожалуйста, отправьте корректный email:"
             kb = types.InlineKeyboardMarkup()
             kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
-            bot.send_message(user_id, text, reply_markup=kb)
-            # Re-register next step handler to wait for correct email
-            bot.register_next_step_handler(message, lambda m: handle_prodamus_email(bot, m, course_id))
+            try:
+                # Send error message and register handler on the NEW message
+                error_msg = bot.send_message(user_id, text, reply_markup=kb)
+                # Re-register next step handler on the NEW error message
+                bot.register_next_step_handler(error_msg, lambda m: handle_prodamus_email(bot, m, course_id))
+            except Exception as e:
+                log_error("payment_handlers", f"Error sending validation error message: {e}")
             return
         
+        # Get course data
         try:
             courses = get_courses_data()
-        except Exception:
+        except Exception as e:
+            log_error("payment_handlers", f"Error fetching courses in handle_prodamus_email: {e}")
             bot.send_message(user_id, "Ошибка: не удалось получить данные курса.")
             return
         
@@ -285,6 +308,7 @@ def register_handlers(bot):
 
         # Try to create payment record once; if DB is locked or duplicate, show error
         if not create_prodamus_payment(order_id, user_id, course_id, email, order_num):
+            log_warning("payment_handlers", f"Failed to create Prodamus payment for user {user_id}, course {course_id}")
             bot.send_message(user_id, "Ошибка: не удалось создать заказ. Попробуйте позже.")
             return
         
@@ -304,20 +328,45 @@ def register_handlers(bot):
         )
         
         # Get actual payment URL
-        bot.send_message(user_id, "⏳ Создаю ссылку на оплату...")
+        try:
+            status_msg = bot.send_message(user_id, "⏳ Создаю ссылку на оплату...")
+        except Exception as e:
+            log_error("payment_handlers", f"Error sending status message: {e}")
+            status_msg = None
+        
         payment_url = get_payment_url(payment_link)
         
         if not payment_url:
+            log_error("payment_handlers", f"Failed to get payment URL for order {order_id}")
+            if status_msg:
+                try:
+                    bot.delete_message(user_id, status_msg.message_id)
+                except Exception:
+                    pass
             bot.send_message(user_id, "❌ Ошибка при создании ссылки на оплату. Попробуйте позже.")
             return
         
         # Update payment URL in database
-        update_prodamus_payment_url(order_id, payment_url)
+        try:
+            update_prodamus_payment_url(order_id, payment_url)
+        except Exception as e:
+            log_error("payment_handlers", f"Error updating payment URL: {e}")
+        
+        # Delete status message if it exists
+        if status_msg:
+            try:
+                bot.delete_message(user_id, status_msg.message_id)
+            except Exception:
+                pass
         
         # Send payment link to user
         text = f"💳 Ссылка на оплату курса \"{clean_course_name}\":\n\n{payment_url}\n\nПосле успешной оплаты доступ к курсу будет предоставлен автоматически."
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("💳 Перейти к оплате", url=payment_url))
         kb.add(types.InlineKeyboardButton("⬅️ Назад к каталогу", callback_data="back_to_catalog"))
-        bot.send_message(user_id, text, reply_markup=kb)
+        try:
+            bot.send_message(user_id, text, reply_markup=kb)
+            log_info("payment_handlers", f"Payment link sent to user {user_id} for course {course_id}")
+        except Exception as e:
+            log_error("payment_handlers", f"Error sending payment link message: {e}")
 
