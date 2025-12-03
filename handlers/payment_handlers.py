@@ -261,7 +261,7 @@ def register_handlers(bot):
         import json
         import time
         with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A,B,C,D,E","location":"payment_handlers.py:258","message":"Handler called","data":{"user_id":message.from_user.id,"message_id":message.message_id,"message_text":message.text[:50] if message.text else None,"course_id":course_id},"timestamp":int(time.time()*1000)}) + '\n')
+            f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"A,B,C,D,E","location":"payment_handlers.py:258","message":"Handler called","data":{"user_id":message.from_user.id,"message_id":message.message_id,"message_text":message.text[:50] if message.text else None,"course_id":course_id},"timestamp":int(time.time()*1000)}) + '\n')
         # #endregion
         
         user_id = message.from_user.id
@@ -269,7 +269,7 @@ def register_handlers(bot):
         
         # #region agent log
         with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"payment_handlers.py:268","message":"Before email validation","data":{"user_id":user_id,"email":email[:50]},"timestamp":int(time.time()*1000)}) + '\n')
+            f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"D","location":"payment_handlers.py:268","message":"Before email validation","data":{"user_id":user_id,"email":email[:50]},"timestamp":int(time.time()*1000)}) + '\n')
         # #endregion
         
         # Validate email
@@ -278,7 +278,7 @@ def register_handlers(bot):
         
         # #region agent log
         with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"payment_handlers.py:275","message":"After email validation","data":{"user_id":user_id,"is_valid":is_valid},"timestamp":int(time.time()*1000)}) + '\n')
+            f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"D","location":"payment_handlers.py:275","message":"After email validation","data":{"user_id":user_id,"is_valid":is_valid},"timestamp":int(time.time()*1000)}) + '\n')
         # #endregion
         
         if not is_valid:
@@ -288,27 +288,28 @@ def register_handlers(bot):
             
             # #region agent log
             with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"payment_handlers.py:283","message":"Before sending error message","data":{"user_id":user_id,"old_message_id":message.message_id},"timestamp":int(time.time()*1000)}) + '\n')
+                f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"A","location":"payment_handlers.py:283","message":"Before sending error message","data":{"user_id":user_id,"old_message_id":message.message_id},"timestamp":int(time.time()*1000)}) + '\n')
             # #endregion
             
             error_msg = bot.send_message(user_id, text, reply_markup=kb)
             
             # #region agent log
             with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"payment_handlers.py:289","message":"After sending error message, before re-register","data":{"user_id":user_id,"old_message_id":message.message_id,"new_message_id":error_msg.message_id},"timestamp":int(time.time()*1000)}) + '\n')
+                f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"A","location":"payment_handlers.py:289","message":"After sending error message, before re-register","data":{"user_id":user_id,"old_message_id":message.message_id,"new_message_id":error_msg.message_id},"timestamp":int(time.time()*1000)}) + '\n')
             # #endregion
             
             # Re-register next step handler to wait for correct email
+            # FIX: Register on the NEW message (error_msg) that was just sent, not the old message
             # #region agent log
             with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A,B,E","location":"payment_handlers.py:293","message":"Re-registering handler","data":{"user_id":user_id,"registering_on_old_msg":True,"old_message_id":message.message_id,"new_message_id":error_msg.message_id},"timestamp":int(time.time()*1000)}) + '\n')
+                f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"A","location":"payment_handlers.py:295","message":"Re-registering handler on NEW message","data":{"user_id":user_id,"registering_on_new_msg":True,"old_message_id":message.message_id,"new_message_id":error_msg.message_id},"timestamp":int(time.time()*1000)}) + '\n')
             # #endregion
             
-            bot.register_next_step_handler(message, lambda m: handle_prodamus_email(bot, m, course_id))
+            bot.register_next_step_handler(error_msg, lambda m: handle_prodamus_email(bot, m, course_id))
             
             # #region agent log
             with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A,B,E","location":"payment_handlers.py:297","message":"Handler re-registered","data":{"user_id":user_id},"timestamp":int(time.time()*1000)}) + '\n')
+                f.write(json.dumps({"sessionId":"debug-session","runId":"post-fix","hypothesisId":"A","location":"payment_handlers.py:299","message":"Handler re-registered on NEW message","data":{"user_id":user_id},"timestamp":int(time.time()*1000)}) + '\n')
             # #endregion
             
             return
