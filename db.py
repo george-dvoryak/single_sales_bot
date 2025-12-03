@@ -196,6 +196,11 @@ def create_prodamus_payment(order_id: str, user_id: int, course_id: str, custome
     except sqlite3.IntegrityError:
         # Order ID already exists
         return False
+    except sqlite3.OperationalError as e:
+        # Database is locked or other operational issue – let caller retry or fail gracefully
+        print("create_prodamus_payment OperationalError:", e)
+        time.sleep(0.1)
+        return False
 
 
 def update_prodamus_payment_url(order_id: str, payment_url: str):
