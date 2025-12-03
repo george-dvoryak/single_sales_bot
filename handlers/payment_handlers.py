@@ -245,24 +245,72 @@ def register_handlers(bot):
         kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
         msg = bot.send_message(user_id, text, reply_markup=kb)
         
+        # #region agent log
+        import json
+        with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A,B,C","location":"payment_handlers.py:250","message":"Initial handler registration","data":{"user_id":user_id,"course_id":course_id,"msg_id":msg.message_id,"msg_chat_id":msg.chat.id},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        # #endregion
+        
         # Register next step handler for email.
         # Using register_next_step_handler with the sent message is more reliable in webhook mode.
         bot.register_next_step_handler(msg, lambda m: handle_prodamus_email(bot, m, course_id))
 
     def handle_prodamus_email(bot, message: types.Message, course_id: str):
         """Handle email input for Prodamus payment"""
+        # #region agent log
+        import json
+        import time
+        with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A,B,C,D,E","location":"payment_handlers.py:258","message":"Handler called","data":{"user_id":message.from_user.id,"message_id":message.message_id,"message_text":message.text[:50] if message.text else None,"course_id":course_id},"timestamp":int(time.time()*1000)}) + '\n')
+        # #endregion
+        
         user_id = message.from_user.id
-        email = message.text.strip()
+        email = message.text.strip() if message.text else ""
+        
+        # #region agent log
+        with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"payment_handlers.py:268","message":"Before email validation","data":{"user_id":user_id,"email":email[:50]},"timestamp":int(time.time()*1000)}) + '\n')
+        # #endregion
         
         # Validate email
         email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        if not re.match(email_pattern, email):
+        is_valid = bool(re.match(email_pattern, email))
+        
+        # #region agent log
+        with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"payment_handlers.py:275","message":"After email validation","data":{"user_id":user_id,"is_valid":is_valid},"timestamp":int(time.time()*1000)}) + '\n')
+        # #endregion
+        
+        if not is_valid:
             text = "❌ Неверный формат email адреса. Пожалуйста, отправьте корректный email:"
             kb = types.InlineKeyboardMarkup()
             kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
-            bot.send_message(user_id, text, reply_markup=kb)
+            
+            # #region agent log
+            with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"payment_handlers.py:283","message":"Before sending error message","data":{"user_id":user_id,"old_message_id":message.message_id},"timestamp":int(time.time()*1000)}) + '\n')
+            # #endregion
+            
+            error_msg = bot.send_message(user_id, text, reply_markup=kb)
+            
+            # #region agent log
+            with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"payment_handlers.py:289","message":"After sending error message, before re-register","data":{"user_id":user_id,"old_message_id":message.message_id,"new_message_id":error_msg.message_id},"timestamp":int(time.time()*1000)}) + '\n')
+            # #endregion
+            
             # Re-register next step handler to wait for correct email
+            # #region agent log
+            with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A,B,E","location":"payment_handlers.py:293","message":"Re-registering handler","data":{"user_id":user_id,"registering_on_old_msg":True,"old_message_id":message.message_id,"new_message_id":error_msg.message_id},"timestamp":int(time.time()*1000)}) + '\n')
+            # #endregion
+            
             bot.register_next_step_handler(message, lambda m: handle_prodamus_email(bot, m, course_id))
+            
+            # #region agent log
+            with open('/Users/g.dvoryak/Desktop/single_sales_bot/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A,B,E","location":"payment_handlers.py:297","message":"Handler re-registered","data":{"user_id":user_id},"timestamp":int(time.time()*1000)}) + '\n')
+            # #endregion
+            
             return
         
         try:
