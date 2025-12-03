@@ -37,10 +37,21 @@ def init_db(conn):
         """
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
-            username TEXT
+            username TEXT,
+            state TEXT,
+            state_data TEXT
         )
         """
     )
+    # Add state columns if they don't exist (migration for existing databases)
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN state TEXT;")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN state_data TEXT;")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS purchases (
@@ -85,7 +96,7 @@ def add_user(user_id: int, username: str = None):
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("INSERT INTO users (user_id, username) VALUES (?, ?);", (user_id, username))
+        cur.execute("INSERT INTO users (user_id, username, state, state_data) VALUES (?, ?, NULL, NULL);", (user_id, username))
     except sqlite3.IntegrityError:
         cur.execute("UPDATE users SET username = ? WHERE user_id = ?;", (username, user_id))
     conn.commit()
@@ -378,3 +389,51 @@ def get_prodamus_payment_by_order_num(order_num: str):
         (order_num,)
     )
     return cur.fetchone()
+
+
+# User state management functions
+def set_user_state(user_id: int, state: str, state_data: str = None):
+    """
+    Set user state (e.g., "awaiting_email" with course_id in state_data).
+    
+    Args:
+        user_id: Telegram user ID
+        state: State name (e.g., "awaiting_email", None to clear)
+        state_data: Optional JSON string with state-specific data
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE users SET state = ?, state_data = ? WHERE user_id = ?;",
+        (state, state_data, user_id)
+    )
+    conn.commit()
+
+
+def get_user_state(user_id: int):
+    """
+    Get user state and state_data.
+    
+    Args:
+        user_id: Telegram user ID
+        
+    Returns:
+        tuple: (state, state_data) or (None, None) if not found or no state
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT state, state_data FROM users WHERE user_id = ?;", (user_id,))
+    row = cur.fetchone()
+    if row:
+        return row[0], row[1]
+    return None, None
+
+
+def clear_user_state(user_id: int):
+    """
+    Clear user state.
+    
+    Args:
+        user_id: Telegram user ID
+    """
+    set_user_state(user_id, None, None)

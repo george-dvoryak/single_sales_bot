@@ -3,7 +3,7 @@
 
 from telebot import types
 from google_sheets import get_courses_data
-from db import has_active_subscription
+from db import has_active_subscription, clear_user_state
 from utils.keyboards import create_catalog_keyboard, create_course_buttons
 from utils.text_utils import strip_html
 from utils.images import get_local_image_path
@@ -103,6 +103,9 @@ def register_handlers(bot):
     def cb_course(c: types.CallbackQuery):
         user_id = c.from_user.id
         course_id = c.data.split("_", 1)[1]
+        
+        # Clear any pending state (e.g., awaiting_email) when user navigates to course view
+        clear_user_state(user_id)
         try:
             courses = get_courses_data()
         except Exception:
@@ -225,6 +228,8 @@ def register_handlers(bot):
     @bot.callback_query_handler(func=lambda c: c.data == "back_to_catalog")
     def cb_back_to_catalog(c: types.CallbackQuery):
         user_id = c.from_user.id
+        # Clear any pending state (e.g., awaiting_email) when user navigates back to catalog
+        clear_user_state(user_id)
         send_catalog_message(
             user_id,
             edit_message=c.message,
