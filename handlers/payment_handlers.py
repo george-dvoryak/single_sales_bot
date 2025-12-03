@@ -28,6 +28,86 @@ PURCHASE_SUCCESS_MSG = texts.get("purchase_success_message", "Оплата ус�
 PURCHASE_RECEIPT_MSG = texts.get("purchase_receipt_message", "Чек об оплате будет отправлен на ваш email в системе YooKassa/Мой Налог.")
 
 
+def grant_access_and_send_invite(
+    bot,
+    user_id: int,
+    course_id: str,
+    course_name: str,
+    duration_days: int,
+    channel: str,
+    payment_id: str | None = None,
+    amount: float | None = None,
+    currency: str | None = None,
+    buyer_email: str | None = None,
+    purchase_receipt_msg: str | None = None,
+    admin_prefix: str = "Оплата",
+):
+    """
+    Common logic for granting course access, creating invite link,
+    notifying user and admins after a successful payment (YooKassa or Prodamus).
+    """
+    # 1. Add purchase (grant access)
+    expiry_ts = add_purchase(
+        user_id,
+        str(course_id),
+        course_name,
+        channel,
+        duration_days,
+        payment_id=payment_id,
+    )
+    print(f"[payments_common] Purchase added: user_id={user_id}, course_id={course_id}, expiry_ts={expiry_ts}")
+
+    # 2. Create invite link (if channel configured)
+    invite_link = None
+    if channel:
+        try:
+            invite = bot.create_chat_invite_link(
+                chat_id=channel,
+                member_limit=1,
+                expire_date=None,
+            )
+            invite_link = invite.invite_link
+            print(f"[payments_common] Invite link created: {invite_link}")
+        except Exception as e:
+            print(f"[payments_common] create_chat_invite_link failed for {channel}: {e}")
+
+    # 3. Prepare and send message to user
+    clean_course_name = strip_html(course_name) if course_name else f"ID {course_id}"
+    receipt_msg = purchase_receipt_msg or PURCHASE_RECEIPT_MSG
+
+    text = PURCHASE_SUCCESS_MSG.format(course_name=clean_course_name)
+    if invite_link:
+        text += "\nНажмите кнопку ниже, чтобы перейти к материалам курса."
+    text += f"\n\n{receipt_msg}"
+
+    try:
+        if invite_link:
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("Перейти в канал курса", url=invite_link))
+            bot.send_message(user_id, text, reply_markup=kb)
+        else:
+            bot.send_message(user_id, text)
+        print(f"[payments_common] Success message sent to user {user_id}, invite_link={invite_link}")
+    except Exception as e:
+        print(f"[payments_common] ERROR sending message to user {user_id}: {e}")
+
+    # 4. Notify admins
+    try:
+        amt = float(amount) if amount is not None else 0.0
+        cur = currency or CURRENCY
+        admin_course_name = strip_html(course_name) if course_name else f"ID {course_id}"
+        admin_text = f"💰 {admin_prefix}: пользователь {user_id} купил {admin_course_name} на сумму {amt:.2f} {cur}."
+        if buyer_email:
+            admin_text += f"\nEmail: {buyer_email}"
+        for aid in ADMIN_IDS:
+            try:
+                bot.send_message(aid, admin_text)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[payments_common] ERROR notifying admins: {e}")
+
+
 def register_handlers(bot):
     """Register payment handlers"""
     
@@ -105,37 +185,7 @@ def register_handlers(bot):
         duration_days = int(course.get("duration_days", 0)) if course else 0
         channel = str(course.get("channel", "")) if course else ""
 
-        expiry_ts = add_purchase(
-            user_id,
-            str(course_id),
-            course_name,
-            channel,
-            duration_days,
-            payment_id=payment.telegram_payment_charge_id
-        )
-
-        invite_link = None
-        if channel:
-            try:
-                invite = bot.create_chat_invite_link(chat_id=channel, member_limit=1, expire_date=None)
-                invite_link = invite.invite_link
-            except Exception as e:
-                print(f"create_chat_invite_link failed for {channel}:", e)
-
-        clean_course_name = strip_html(course_name) if course_name else f"ID {course_id}"
-        text = PURCHASE_SUCCESS_MSG.format(course_name=clean_course_name)
-        if invite_link:
-            text += "\nНажмите кнопку ниже, чтобы перейти к материалам курса."
-        text += f"\n\n{PURCHASE_RECEIPT_MSG}"
-
-        if invite_link:
-            kb = types.InlineKeyboardMarkup()
-            kb.add(types.InlineKeyboardButton("Перейти в канал курса", url=invite_link))
-            bot.send_message(user_id, text, reply_markup=kb)
-        else:
-            bot.send_message(user_id, text)
-
-        # Notify admins
+        # Amount and currency for admin notification
         try:
             amount = payment.total_amount / 100.0
             cur = payment.currency
@@ -147,15 +197,22 @@ def register_handlers(bot):
                 buyer_email = payment.order_info.email
         except Exception:
             pass
-        clean_course_name = strip_html(course_name) if course_name else f"ID {course_id}"
-        admin_text = f"💰 Оплата: пользователь {user_id} купил {clean_course_name} на сумму {amount:.2f} {cur}."
-        if buyer_email:
-            admin_text += f"\nEmail: {buyer_email}"
-        for aid in ADMIN_IDS:
-            try:
-                bot.send_message(aid, admin_text)
-            except Exception:
-                pass
+
+        # Use common helper to grant access, send invite & notify admins
+        grant_access_and_send_invite(
+            bot=bot,
+            user_id=user_id,
+            course_id=str(course_id),
+            course_name=course_name,
+            duration_days=duration_days,
+            channel=channel,
+            payment_id=payment.telegram_payment_charge_id,
+            amount=amount,
+            currency=cur,
+            buyer_email=buyer_email,
+            purchase_receipt_msg=PURCHASE_RECEIPT_MSG,
+            admin_prefix="Оплата",
+        )
 
         # Placeholder for sending fiscal receipt (YooKassa auto-fiscalization recommended)
         try:

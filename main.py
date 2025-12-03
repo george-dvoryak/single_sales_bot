@@ -47,11 +47,7 @@ try:
     from utils.channel import check_course_channels
     from google_sheets import get_courses_data, get_texts_data
     from utils.images import preload_images_for_bot
-    from db import (
-        add_purchase, add_user, has_active_subscription,
-        update_prodamus_payment_status, get_prodamus_payment_by_order_num
-    )
-    from utils.text_utils import strip_html
+    from db import update_prodamus_payment_status, get_prodamus_payment_by_order_num, get_user
     _debug_log("main.py", "Handlers and utilities imported successfully")
 except Exception as e:
     print(f"[main.py] ERROR importing handlers/utilities: {e}")
@@ -417,86 +413,49 @@ def _prodamus_webhook():
                     course_name = course.get("name", f"ID {course_id}")
                     duration_days = int(course.get("duration_days", 0)) if course else 0
                     channel = str(course.get("channel", "")) if course else ""
-                    
-                    # Проверяем, нет ли уже активной подписки
-                    already_has_access = has_active_subscription(user_id, str(course_id))
-                    if already_has_access:
-                        print(f"[prodamus_webhook] User {user_id} already has active subscription for course {course_id}")
-                    else:
-                        # Добавляем пользователя в БД если его нет
-                        try:
-                            add_user(user_id, None)
-                        except Exception:
-                            pass  # User might already exist
-                        
-                        # Добавляем покупку
-                        expiry_ts = add_purchase(
-                            user_id,
-                            str(course_id),
-                            course_name,
-                            channel,
-                            duration_days,
-                            payment_id=f"prodamus_{order_id}"
-                        )
-                        print(f"[prodamus_webhook] Purchase added for user {user_id}, course {course_id}, expiry: {expiry_ts}")
-                    
-                    # Создаём пригласительную ссылку в канал (всегда, даже если уже есть доступ)
-                    invite_link = None
-                    if channel:
-                        try:
-                            invite = bot.create_chat_invite_link(chat_id=channel, member_limit=1, expire_date=None)
-                            invite_link = invite.invite_link
-                            print(f"[prodamus_webhook] Invite link created: {invite_link}")
-                        except Exception as e:
-                            print(f"[prodamus_webhook] create_chat_invite_link failed for {channel}: {e}")
-                    
-                    # Получаем тексты для сообщений
+
+                    # Логирование исходных данных курса
+                    print(f"[prodamus_webhook] Course resolved: id={course_id}, name={course_name}, channel={channel}, duration_days={duration_days}")
+
+                    # Используем общую логику из payment_handlers, чтобы выдать доступ и отправить инвайт
                     try:
-                        texts = get_texts_data()
+                        amount_float = float(sum_amount) if sum_amount else 0.0
                     except Exception:
-                        texts = {}
-                    
-                    clean_course_name = strip_html(course_name) if course_name else f"ID {course_id}"
-                    purchase_success_msg = texts.get("purchase_success_message", 
-                        "Оплата успешно выполнена! Вам предоставлен доступ к курсу {course_name}.")
-                    text = purchase_success_msg.format(course_name=clean_course_name)
-                    
-                    if invite_link:
-                        text += "\nНажмите кнопку ниже, чтобы перейти к материалам курса."
-                    
-                    purchase_receipt_msg = texts.get("purchase_receipt_message", 
-                        "Чек об оплате будет отправлен на ваш email в системе Prodamus.")
-                    text += f"\n\n{purchase_receipt_msg}"
-                    
-                    # Отправляем сообщение пользователю (точно так же, как в YooKassa)
+                        amount_float = 0.0
+
+                    # Для логов попытаемся получить username из БД (если есть)
+                    tg_username = None
                     try:
-                        if invite_link:
-                            kb = telebot.types.InlineKeyboardMarkup()
-                            kb.add(telebot.types.InlineKeyboardButton("Перейти в канал курса", url=invite_link))
-                            bot.send_message(user_id, text, reply_markup=kb)
-                            print(f"[prodamus_webhook] Success message with invite link sent to user {user_id}")
-                        else:
-                            bot.send_message(user_id, text)
-                            print(f"[prodamus_webhook] Success message (no invite link) sent to user {user_id}")
-                    except Exception as e:
-                        print(f"[prodamus_webhook] ERROR sending message to user {user_id}: {e}")
-                        traceback.print_exc()
-                    
-                    # Уведомляем админов
-                    try:
-                        amount = float(sum_amount) if sum_amount else 0.0
-                        clean_course_name = strip_html(course_name) if course_name else f"ID {course_id}"
-                        admin_text = f"💰 Оплата (Prodamus): пользователь {user_id} купил {clean_course_name} на сумму {amount:.2f} RUB."
-                        if customer_email:
-                            admin_text += f"\nEmail: {customer_email}"
-                        admin_text += f"\nOrder ID: {order_id}"
-                        for aid in ADMIN_IDS:
-                            try:
-                                bot.send_message(aid, admin_text)
-                            except Exception:
-                                pass
-                    except Exception as e:
-                        print(f"[prodamus_webhook] ERROR notifying admins: {e}")
+                        db_user = get_user(user_id)
+                        if db_user and "username" in db_user.keys():
+                            tg_username = db_user["username"]
+                    except Exception:
+                        pass
+
+                    # Вызов общей функции для выдачи доступа и отправки инвайта
+                    payment_handlers.grant_access_and_send_invite(
+                        bot=bot,
+                        user_id=user_id,
+                        course_id=str(course_id),
+                        course_name=course_name,
+                        duration_days=duration_days,
+                        channel=channel,
+                        payment_id=f"prodamus_{order_id}",
+                        amount=amount_float,
+                        currency="RUB",
+                        buyer_email=customer_email,
+                        purchase_receipt_msg=(
+                            "Чек об оплате будет отправлен на ваш email в системе Prodamus."
+                        ),
+                        admin_prefix="Оплата (Prodamus)",
+                    )
+
+                    # Дополнительный лог с основными данными вебхука
+                    print(
+                        "[prodamus_webhook] LOG: "
+                        f"user_id={user_id}, username={tg_username}, email={customer_email}, "
+                        f"payment_status={payment_status}, order_id={order_id}, order_num={order_num}"
+                    )
                     
                 except (ValueError, IndexError) as e:
                     print(f"[prodamus_webhook] ERROR parsing order_num '{order_num}': {e}")
@@ -525,9 +484,8 @@ def _prodamus_webhook():
                     
                     # Send failed payment message to user
                     try:
-                        clean_course_name = strip_html(course_name) if course_name else f"ID {course_id}"
                         failed_msg = (
-                            f"❌ Оплата курса \"{clean_course_name}\" не была завершена.\n\n"
+                            f"❌ Оплата курса \"{course_name}\" не была завершена.\n\n"
                             f"Статус оплаты: {payment_status}\n\n"
                             f"Если вы произвели оплату, но получили это сообщение, пожалуйста, обратитесь в поддержку."
                         )
