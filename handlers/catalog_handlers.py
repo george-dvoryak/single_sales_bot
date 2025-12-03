@@ -103,9 +103,6 @@ def register_handlers(bot):
     def cb_course(c: types.CallbackQuery):
         user_id = c.from_user.id
         course_id = c.data.split("_", 1)[1]
-        # Clear any pending user state when viewing a course
-        from utils.user_state import clear_user_state
-        clear_user_state(user_id)
         try:
             courses = get_courses_data()
         except Exception:
@@ -228,9 +225,6 @@ def register_handlers(bot):
     @bot.callback_query_handler(func=lambda c: c.data == "back_to_catalog")
     def cb_back_to_catalog(c: types.CallbackQuery):
         user_id = c.from_user.id
-        # Clear any pending user state when going back to catalog
-        from utils.user_state import clear_user_state
-        clear_user_state(user_id)
         send_catalog_message(
             user_id,
             edit_message=c.message,
