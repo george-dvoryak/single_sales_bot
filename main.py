@@ -87,7 +87,11 @@ def _health():
 
 @application.get("/diag")
 def _diag():
-    """Lightweight diagnostics endpoint"""
+    """
+    Lightweight diagnostics endpoint.
+    SECURITY: This endpoint exposes channel configuration info.
+    Consider adding authentication in production.
+    """
     try:
         report = check_course_channels(bot, get_courses_data)
     except Exception as e:
@@ -97,20 +101,37 @@ def _diag():
 
 @application.get("/webhook_info")
 def _webhook_info():
-    """Check webhook status and configuration"""
+    """Check webhook status and configuration (sanitized for security)"""
     try:
         import json
         webhook_info = bot.get_webhook_info()
+        
+        # SECURITY: Sanitize webhook URL to not expose token
+        webhook_url_sanitized = webhook_info.url
+        if webhook_url_sanitized and TELEGRAM_BOT_TOKEN in webhook_url_sanitized:
+            # Replace token in URL with [REDACTED]
+            webhook_url_sanitized = webhook_url_sanitized.replace(TELEGRAM_BOT_TOKEN, "[REDACTED]")
+        
+        # SECURITY: Sanitize configured route
+        route_sanitized = webhook_route
+        if route_sanitized and TELEGRAM_BOT_TOKEN in route_sanitized:
+            route_sanitized = route_sanitized.replace(TELEGRAM_BOT_TOKEN, "[REDACTED]")
+        
+        # SECURITY: Sanitize WEBHOOK_URL config
+        webhook_url_config_sanitized = WEBHOOK_URL
+        if webhook_url_config_sanitized and TELEGRAM_BOT_TOKEN in webhook_url_config_sanitized:
+            webhook_url_config_sanitized = webhook_url_config_sanitized.replace(TELEGRAM_BOT_TOKEN, "[REDACTED]")
+        
         info = {
-            "webhook_url": webhook_info.url,
+            "webhook_url": webhook_url_sanitized,
             "has_custom_certificate": webhook_info.has_custom_certificate,
             "pending_update_count": webhook_info.pending_update_count,
             "last_error_date": webhook_info.last_error_date,
             "last_error_message": webhook_info.last_error_message,
             "max_connections": webhook_info.max_connections,
             "allowed_updates": webhook_info.allowed_updates,
-            "configured_route": webhook_route,
-            "webhook_url_config": WEBHOOK_URL,
+            "configured_route": route_sanitized,
+            "webhook_url_config": webhook_url_config_sanitized,
             "use_webhook": USE_WEBHOOK,
         }
         return f"Webhook Info:\n{json.dumps(info, indent=2, default=str)}", 200
@@ -119,8 +140,15 @@ def _webhook_info():
         return f"Error getting webhook info: {e}\n{traceback.format_exc()}", 500
 
 
-# Webhook endpoint - use WEBHOOK_PATH if set, otherwise use default path
-webhook_route = WEBHOOK_PATH if WEBHOOK_PATH else f"/{TELEGRAM_BOT_TOKEN}"
+# Webhook endpoint - use WEBHOOK_PATH if set, otherwise generate secure path
+if not WEBHOOK_PATH:
+    # SECURITY: Generate secure random path instead of using bot token
+    import hashlib
+    # Use first 16 chars of SHA256 hash of token as path (secure but deterministic)
+    token_hash = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode()).hexdigest()[:16]
+    webhook_route = f"/webhook_{token_hash}"
+else:
+    webhook_route = WEBHOOK_PATH
 
 
 @application.post(webhook_route)
@@ -186,7 +214,11 @@ try:
                 drop_pending_updates=True,
                 allowed_updates=["message", "callback_query", "pre_checkout_query"]
             )
-            log_info("main", f"Webhook set to {WEBHOOK_URL}")
+            # SECURITY: Sanitize webhook URL in logs
+            webhook_url_log = WEBHOOK_URL
+            if TELEGRAM_BOT_TOKEN in webhook_url_log:
+                webhook_url_log = webhook_url_log.replace(TELEGRAM_BOT_TOKEN, "[REDACTED]")
+            log_info("main", f"Webhook set to {webhook_url_log}")
         except Exception as e:
             log_error("main", f"Failed to set webhook: {e}", exc_info=True)
 except Exception as e:

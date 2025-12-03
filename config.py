@@ -2,6 +2,7 @@
 """Configuration settings for the bot."""
 
 import os
+import hashlib
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -70,7 +71,11 @@ WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "")
 if not WEBHOOK_URL and WEBHOOK_HOST and not WEBHOOK_HOST.startswith("<"):
     # If WEBHOOK_URL is not set but WEBHOOK_HOST is, construct WEBHOOK_PATH if needed
     if not WEBHOOK_PATH:
-        WEBHOOK_PATH = f"/{TELEGRAM_BOT_TOKEN}"
+        # SECURITY: Use a secure random path instead of bot token
+        # Generate a secure random path using hash of token (not the token itself)
+        # Use first 16 chars of SHA256 hash of token as path (secure but deterministic)
+        token_hash = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode()).hexdigest()[:16]
+        WEBHOOK_PATH = f"/webhook_{token_hash}"
     # Ensure WEBHOOK_PATH starts with "/"
     if WEBHOOK_PATH and not WEBHOOK_PATH.startswith("/"):
         WEBHOOK_PATH = "/" + WEBHOOK_PATH
