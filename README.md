@@ -1,37 +1,46 @@
 # Sales Bot - Clean and Modular
 
-A simple, clean Telegram bot for selling courses with YooKassa payment integration.
+A simple, clean Telegram bot for selling courses with YooKassa and Prodamus payment integration.
 
 ## Features
 
 - 🎯 Course catalog from Google Sheets
-- 💳 YooKassa payments (via Telegram Payments API)
+- 💳 Multiple payment methods:
+  - YooKassa (via Telegram Payments API)
+  - Prodamus (external payment gateway)
 - 🔐 Private channel access management
 - 📊 Admin panel with subscription management
 - 🔄 Automatic subscription expiry handling
 - 📱 Webhook and polling modes
+- 📝 Structured logging
+- 🖼️ Image caching and preloading
 
 ## Project Structure
 
 ```
 single_sales_bot/
-├── handlers/           # Bot command and callback handlers
-│   ├── basic_handlers.py       # /start, support, oferta
-│   ├── catalog_handlers.py     # Course catalog and viewing
-│   ├── payment_handlers.py     # Payment processing (YooKassa)
-│   └── admin_handlers.py       # Admin commands
-├── payments/          # Payment integrations
-│   └── yookassa.py            # YooKassa payment handler
-├── utils/             # Utility functions
-│   ├── text_utils.py          # Text formatting and cleaning
-│   ├── keyboards.py           # Keyboard builders
-│   └── channel.py             # Channel management
-├── config.py          # Configuration settings
-├── db.py              # Database operations
-├── google_sheets.py   # Google Sheets integration
-├── main.py            # Main entry point
-├── webhook_app.py     # WSGI application
-└── requirements.txt   # Dependencies
+├── handlers/              # Bot command and callback handlers
+│   ├── basic_handlers.py         # /start, support, oferta
+│   ├── catalog_handlers.py       # Course catalog and viewing
+│   ├── payment_handlers.py       # Payment processing (YooKassa & Prodamus)
+│   └── admin_handlers.py         # Admin commands
+├── payments/              # Payment integrations
+│   ├── yookassa.py               # YooKassa payment handler
+│   ├── prodamus.py               # Prodamus payment link generation
+│   └── prodamus_webhook.py       # Prodamus webhook handler
+├── utils/                 # Utility functions
+│   ├── text_utils.py             # Text formatting and cleaning
+│   ├── text_loader.py             # Text loading and caching
+│   ├── keyboards.py               # Keyboard builders
+│   ├── channel.py                 # Channel management
+│   ├── images.py                  # Image caching and preloading
+│   └── logger.py                  # Logging utility
+├── config.py              # Configuration settings
+├── db.py                   # Database operations
+├── google_sheets.py        # Google Sheets integration
+├── main.py                 # Main entry point
+├── webhook_app.py          # WSGI application
+└── requirements.txt        # Dependencies
 ```
 
 ## Setup
@@ -53,6 +62,10 @@ TELEGRAM_BOT_TOKEN=your_bot_token_here
 # Payments (YooKassa)
 PAYMENT_PROVIDER_TOKEN=your_yookassa_token_here
 CURRENCY=RUB
+
+# Payments (Prodamus) - Optional
+PRODAMUS_SECRET_KEY=your_prodamus_secret_key
+PRODAMUS_BASE_URL=https://demo.payform.ru
 
 # Database
 # Database
@@ -138,17 +151,47 @@ python main.py
 ## Payment Methods
 
 ### YooKassa (via Telegram Payments)
-The primary and only payment method using Telegram's native payment interface. Requires a provider token from BotFather linked to your YooKassa account.
+Primary payment method using Telegram's native payment interface. Requires a provider token from BotFather linked to your YooKassa account.
 
-## Key Improvements
+### Prodamus
+Alternative payment gateway for external payments. Requires:
+- `PRODAMUS_SECRET_KEY` - Secret key for webhook signature verification
+- `PRODAMUS_BASE_URL` - Base URL of Prodamus payment form (default: https://demo.payform.ru)
+
+The webhook endpoint is available at `/prodamus_webhook` and handles payment status updates automatically.
+
+## Key Features
 
 ✅ **Modular structure** - Code organized into logical modules  
-✅ **Single payment system** - Simple YooKassa-only integration  
-✅ **Clean code** - ~200 lines per file vs 1775 in old main.py  
+✅ **Multiple payment systems** - YooKassa and Prodamus support  
+✅ **Clean code** - Well-organized, maintainable codebase  
+✅ **Structured logging** - Centralized logging with proper levels  
 ✅ **Better error handling** - Proper exception handling throughout  
 ✅ **Clear separation of concerns** - Handlers, utils, payments separated  
+✅ **Text caching** - Efficient text loading from Google Sheets  
+✅ **Image caching** - Local image caching for faster delivery  
 ✅ **Easier maintenance** - Find and fix issues quickly  
-✅ **Type hints ready** - Easy to add type hints if needed  
+✅ **Type hints ready** - Easy to add type hints if needed
+
+## Development
+
+### Code Style
+- Use consistent formatting (PEP 8)
+- Add docstrings to public functions
+- Use the logging utility instead of print statements
+- Keep functions focused and small
+
+### Testing
+Run the bot locally in polling mode for testing:
+```bash
+python main.py
+```
+
+### Logging
+The bot uses structured logging via `utils.logger`. Log levels:
+- `log_info()` - General information
+- `log_warning()` - Warnings
+- `log_error()` - Errors with optional exception info  
 
 ## License
 

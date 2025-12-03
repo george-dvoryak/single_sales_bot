@@ -6,26 +6,13 @@ Main entry point for the bot (polling or webhook mode)
 
 import time
 import traceback
-import json
-import re
-import hmac
-import hashlib
 import telebot
-from flask import Flask, request, abort
+from flask import Flask, request
 
-# Simple debug logging - only prints, no file I/O to avoid permission issues
-def _debug_log(location, message, data=None, hypothesis_id=None):
-    """Simple debug logging that only prints - safe for production"""
-    try:
-        msg = f"[{location}] {message}"
-        if data is not None:
-            msg += f" | data: {data}"
-        print(msg)
-    except Exception:
-        pass  # Silently fail - don't crash the app if logging fails
+from utils.logger import log_info, log_error, log_warning
 
 try:
-    _debug_log("main.py", "Starting config import")
+    log_info("main", "Starting config import")
     from config import (
         TELEGRAM_BOT_TOKEN,
         USE_WEBHOOK,
@@ -33,67 +20,62 @@ try:
         WEBHOOK_PATH,
         WEBHOOK_SECRET_TOKEN,
         ADMIN_IDS,
-        PRODAMUS_SECRET_KEY,
     )
-    _debug_log("main.py", "Config imported successfully")
+    log_info("main", "Config imported successfully")
 except Exception as e:
-    print(f"[main.py] ERROR importing config: {e}")
+    log_error("main", f"Error importing config: {e}")
     raise
 
 # Import handlers and supporting utilities
 try:
-    _debug_log("main.py", "Starting handler and utility imports")
+    log_info("main", "Starting handler and utility imports")
     from handlers import basic_handlers, catalog_handlers, payment_handlers, admin_handlers
     from utils.channel import check_course_channels
-    from google_sheets import get_courses_data, get_texts_data
+    from google_sheets import get_courses_data
     from utils.images import preload_images_for_bot
-    from db import update_prodamus_payment_status, get_user
-    _debug_log("main.py", "Handlers and utilities imported successfully")
+    from utils.text_loader import get_texts
+    log_info("main", "Handlers and utilities imported successfully")
 except Exception as e:
-    print(f"[main.py] ERROR importing handlers/utilities: {e}")
+    log_error("main", f"Error importing handlers/utilities: {e}")
     raise
 
 # Initialize bot
 try:
-    _debug_log("main.py", "Initializing bot")
+    log_info("main", "Initializing bot")
     bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode=None, threaded=False)
-    _debug_log("main.py", "Bot initialized successfully")
+    log_info("main", "Bot initialized successfully")
 except Exception as e:
-    print(f"[main.py] ERROR initializing bot: {e}")
+    log_error("main", f"Error initializing bot: {e}")
     raise
 
 # Register all handlers
 try:
-    _debug_log("main.py", "Starting handler registration")
+    log_info("main", "Starting handler registration")
     payment_handlers.register_handlers(bot)
     basic_handlers.register_handlers(bot)
     catalog_handlers.register_handlers(bot)
     admin_handlers.register_handlers(bot)
-    _debug_log("main.py", "All handlers registered successfully")
+    log_info("main", "All handlers registered successfully")
 except Exception as e:
-    print(f"[main.py] ERROR registering handlers: {e}")
+    log_error("main", f"Error registering handlers: {e}")
     raise
 
 # Preload images from Google Sheets so they are available locally for sending
 try:
-    _debug_log("main.py", "Starting image preloading")
-    texts_for_images = {}
-    try:
-        texts_for_images = get_texts_data()
-    except Exception as e:
-        print(f"[main.py] Warning: could not fetch texts for image preloading: {e}")
+    log_info("main", "Starting image preloading")
+    texts_for_images = get_texts()
     preload_images_for_bot(get_courses_data, texts_for_images)
-    _debug_log("main.py", "Image preloading completed")
+    log_info("main", "Image preloading completed")
 except Exception as e:
-    print(f"[main.py] ERROR during image preloading: {e}")
+    log_warning("main", f"Error during image preloading: {e}")
 
 # Flask app for webhook mode (WSGI server on PythonAnywhere)
 try:
-    _debug_log("main.py", "Creating Flask application")
+    log_info("main", "Creating Flask application")
     application = Flask(__name__)
-    _debug_log("main.py", "Flask application created")
+    log_info("main", "Flask application created")
 except Exception as e:
-    print(f"[main.py] ERROR creating Flask app: {e}")
+    log_error("main", f"Error creating Flask app: {e}")
     raise
 
 
@@ -117,6 +99,7 @@ def _diag():
 def _webhook_info():
     """Check webhook status and configuration"""
     try:
+        import json
         webhook_info = bot.get_webhook_info()
         info = {
             "webhook_url": webhook_info.url,
@@ -132,6 +115,7 @@ def _webhook_info():
         }
         return f"Webhook Info:\n{json.dumps(info, indent=2, default=str)}", 200
     except Exception as e:
+        log_error("webhook_info", f"Error getting webhook info: {e}", exc_info=True)
         return f"Error getting webhook info: {e}\n{traceback.format_exc()}", 500
 
 
@@ -143,372 +127,50 @@ webhook_route = WEBHOOK_PATH if WEBHOOK_PATH else f"/{TELEGRAM_BOT_TOKEN}"
 def _webhook():
     """Telegram webhook endpoint"""
     try:
-        print(f"[webhook] Received POST request to {webhook_route}")
+        log_info("webhook", f"Received POST request to {webhook_route}")
         
         # Validate Telegram secret header if configured
         secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
         if WEBHOOK_SECRET_TOKEN and secret != WEBHOOK_SECRET_TOKEN:
-            print(f"[webhook] ERROR: Invalid secret token")
-            abort(403)
+            log_error("webhook", "Invalid secret token")
+            return "Forbidden", 403
         
         # Read request data
         try:
             raw_data = request.get_data()
             if not raw_data:
-                print("[webhook] ERROR: No data received")
+                log_error("webhook", "No data received")
                 return "ERROR: No data", 400
             
             json_str = raw_data.decode("utf-8")
-            print(f"[webhook] Received data: {json_str[:200]}...")  # Log first 200 chars
+            log_info("webhook", f"Received data: {json_str[:200]}...")
             
             # Parse and process update
             update = telebot.types.Update.de_json(json_str)
             if update is None:
-                print("[webhook] ERROR: Failed to parse update")
+                log_error("webhook", "Failed to parse update")
                 return "ERROR: Invalid update", 400
             
-            print(f"[webhook] Processing update: update_id={update.update_id}")
+            log_info("webhook", f"Processing update: update_id={update.update_id}")
             bot.process_new_updates([update])
-            print(f"[webhook] Successfully processed update {update.update_id}")
+            log_info("webhook", f"Successfully processed update {update.update_id}")
             
         except Exception as e:
-            print(f"[webhook] ERROR processing update: {e}")
-            traceback.print_exc()
+            log_error("webhook", f"Error processing update: {e}", exc_info=True)
             return "ERROR", 500
         
         return "OK", 200
         
     except Exception as e:
-        print(f"[webhook] FATAL ERROR: {e}")
-        traceback.print_exc()
+        log_error("webhook", f"Fatal error: {e}", exc_info=True)
         return "ERROR", 500
-
-
-def build_hmac_payload(flat_form: dict) -> dict:
-    """
-    Из плоского dict с ключами вида 'products[0][name]'
-    собираем структуру как у PHP $_POST:
-    {
-        ...,
-        "products": [
-            {"name": "...", "price": "...", ...},
-            ...
-        ]
-    }
-    """
-    base = {}
-    products_tmp = {}  # index -> dict полей продукта
-
-    for key, value in flat_form.items():
-        # Sign никогда не должен участвовать в подписи
-        if key == "Sign":
-            continue
-
-        m = re.match(r'^products\[(\d+)\]\[(.+)\]$', key)
-        if m:
-            idx = int(m.group(1))
-            field = m.group(2)
-            products_tmp.setdefault(idx, {})[field] = value
-        else:
-            base[key] = value
-
-    if products_tmp:
-        # Собираем список продуктов по индексу
-        base["products"] = [products_tmp[i] for i in sorted(products_tmp.keys())]
-
-    return base
-
-
-def stringify_recursive(obj):
-    """
-    Полный аналог array_walk_recursive + strval для PHP:
-    все значения (на всех уровнях) превращаем в строки.
-    """
-    if isinstance(obj, dict):
-        return {str(k): stringify_recursive(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [stringify_recursive(v) for v in obj]
-    elif obj is None:
-        return ""
-    else:
-        return str(obj)
-
-
-def sort_recursive(obj):
-    """Рекурсивная сортировка ключей словаря"""
-    if isinstance(obj, dict):
-        return {
-            key: sort_recursive(value)
-            for key, value in sorted(obj.items(), key=lambda item: item[0])
-        }
-    elif isinstance(obj, list):
-        return [sort_recursive(item) for item in obj]
-    else:
-        return obj
 
 
 @application.post("/prodamus_webhook")
 def _prodamus_webhook():
     """Prodamus webhook endpoint with signature verification"""
-    try:
-        print("[prodamus_webhook] Received POST request")
-        
-        # 1. Подпись из заголовка
-        provided_signature = str(request.headers.get("Sign", "")).strip()
-        if not provided_signature:
-            print("[prodamus_webhook] ERROR: Missing Sign header")
-            abort(400, "Missing Sign header")
-        
-        if not PRODAMUS_SECRET_KEY:
-            print("[prodamus_webhook] ERROR: PRODAMUS_SECRET_KEY not configured")
-            abort(500, "Prodamus secret key not configured")
-        
-        secret_key_bytes = PRODAMUS_SECRET_KEY.encode("utf-8")
-        
-        # 2. Достаём данные из тела запроса
-        content_type = (request.content_type or "").split(";")[0].strip()
-        
-        if content_type == "application/json":
-            # Если пришёл JSON, преобразуем в плоский dict для обработки
-            json_data = request.get_json(force=True, silent=False)
-            # Преобразуем JSON в форму для единообразной обработки
-            flat_form = {}
-            for key, value in json_data.items():
-                if key == "Sign":
-                    continue
-                if key == "products" and isinstance(value, list):
-                    # Разворачиваем products обратно в плоскую структуру
-                    for idx, product in enumerate(value):
-                        if isinstance(product, dict):
-                            for field, field_value in product.items():
-                                flat_form[f"products[{idx}][{field}]"] = field_value
-                else:
-                    flat_form[key] = value
-        else:
-            # application/x-www-form-urlencoded - берём плоский dict
-            flat_form = request.form.to_dict()
-        
-        print(f"[prodamus_webhook] Raw form (flat dict): {list(flat_form.keys())[:10]}...")
-        
-        # 3. Превращаем плоский dict в структуру как у PHP ($_POST)
-        payload = build_hmac_payload(flat_form)
-        print(f"[prodamus_webhook] Payload for HMAC (nested): {list(payload.keys())}")
-        
-        # 4. Рекурсивно приводим все значения к строкам
-        stringified = stringify_recursive(payload)
-        
-        # 5. Сортируем ключи рекурсивно
-        sorted_payload = sort_recursive(stringified)
-        
-        # 6. json_encode без экранирования юникода, но со стандартным экранированием '/'
-        json_string = json.dumps(
-            sorted_payload,
-            ensure_ascii=False,
-            separators=(',', ':')
-        )
-        
-        # 7. PHP json_encode по умолчанию экранирует '/', поэтому имитируем это
-        msg_to_sign = json_string.replace('/', r'\/')
-        
-        print(f"[prodamus_webhook] Final msg_to_sign (first 200 chars): {msg_to_sign[:200]}...")
-        
-        # 8. Вычисляем подпись
-        calculated_signature = hmac.new(
-            secret_key_bytes,
-            msg=msg_to_sign.encode("utf-8"),
-            digestmod=hashlib.sha256
-        ).hexdigest()
-        
-        print(f"[prodamus_webhook] Provided signature: {provided_signature[:20]}...")
-        print(f"[prodamus_webhook] Calculated signature: {calculated_signature[:20]}...")
-        
-        # 9. Сравниваем подписи
-        signature_valid = hmac.compare_digest(
-            provided_signature.lower(),
-            calculated_signature.lower()
-        )
-        
-        if not signature_valid:
-            print(f"[prodamus_webhook] ERROR: Invalid signature!")
-            print(f"[prodamus_webhook] Provided: {provided_signature}")
-            print(f"[prodamus_webhook] Calculated: {calculated_signature}")
-            print(f"[prodamus_webhook] Message to sign (first 500 chars): {msg_to_sign[:500]}")
-            
-            # Notify admins about unverified signature
-            # Try to extract order info from payload if available
-            try:
-                # Parse payload to get order info for admin notification
-                try:
-                    payload_for_notification = json.loads(msg_to_sign)
-                    order_id = payload_for_notification.get("order_id", "unknown")
-                    order_num = payload_for_notification.get("order_num", "unknown")
-                    payment_status = payload_for_notification.get("payment_status", "unknown")
-                except Exception:
-                    order_id = "unknown"
-                    order_num = "unknown"
-                    payment_status = "unknown"
-                
-                admin_text = (
-                    f"⚠️ Prodamus webhook с неподтверждённой подписью!\n\n"
-                    f"Order ID: {order_id}\n"
-                    f"Order Num: {order_num}\n"
-                    f"Payment Status: {payment_status}\n"
-                    f"Provided Sign: {provided_signature[:20]}...\n"
-                    f"Calculated Sign: {calculated_signature[:20]}...\n\n"
-                    f"Данные не обработаны из-за неверной подписи."
-                )
-                for aid in ADMIN_IDS:
-                    try:
-                        bot.send_message(aid, admin_text)
-                    except Exception:
-                        pass
-            except Exception as e:
-                print(f"[prodamus_webhook] ERROR notifying admins about invalid signature: {e}")
-            
-            abort(403, "Invalid signature")
-        
-        print("[prodamus_webhook] Signature verified successfully")
-        print(f"[prodamus_webhook] Payment status: {payload.get('payment_status')}")
-        
-        # 10. Update payment status in database (use our business order_num as key)
-        order_id = payload.get("order_id", "")
-        order_num = payload.get("order_num", "")
-        payment_status = payload.get("payment_status", "")
-        
-        if order_num:
-            try:
-                update_prodamus_payment_status(order_num, payment_status)
-            except Exception as e:
-                print(f"[prodamus_webhook] ERROR updating payment status: {e}")
-        
-        # 11. Обработка успешной оплаты
-        if payment_status == "success":
-            order_num = payload.get("order_num", "")
-            order_id = payload.get("order_id", "")
-            customer_email = payload.get("customer_email", "")
-            sum_amount = payload.get("sum", "0")
-            
-            print(f"[prodamus_webhook] Processing successful payment: order_num={order_num}, order_id={order_id}")
-            
-            # Парсим order_num в формате "user_id_course_id_timestamp"
-            # Например: "466513805_2_1764770302" -> user_id=466513805, course_id=2
-            original_order_num = order_num
-
-            try:
-                user_id_str, course_id_str, _ts = order_num.split("_", 2)
-                user_id = int(user_id_str)
-                course_id = course_id_str
-            except Exception as e:
-                print(f"[prodamus_webhook] ERROR parsing order_num '{order_num}' as user_id_course_id_timestamp: {e}")
-                return "OK", 200
-
-            if user_id and course_id:
-                try:
-                    # Получаем данные курса
-                    try:
-                        courses = get_courses_data()
-                    except Exception as e:
-                        print(f"[prodamus_webhook] ERROR: Could not fetch courses: {e}")
-                        courses = []
-                    
-                    course = next((x for x in courses if str(x.get("id")) == str(course_id)), None)
-                    if not course:
-                        print(f"[prodamus_webhook] ERROR: Course {course_id} not found")
-                        return "OK", 200  # Return OK to Prodamus even if course not found
-                    
-                    course_name = course.get("name", f"ID {course_id}")
-                    duration_days = int(course.get("duration_days", 0)) if course else 0
-                    channel = str(course.get("channel", "")) if course else ""
-
-                    # Логирование исходных данных курса
-                    print(f"[prodamus_webhook] Course resolved: id={course_id}, name={course_name}, channel={channel}, duration_days={duration_days}")
-
-                    # Используем общую логику из payment_handlers, чтобы выдать доступ и отправить инвайт
-                    try:
-                        amount_float = float(sum_amount) if sum_amount else 0.0
-                    except Exception:
-                        amount_float = 0.0
-
-                    # Для логов попытаемся получить username из БД (если есть)
-                    tg_username = None
-                    try:
-                        db_user = get_user(user_id)
-                        if db_user and "username" in db_user.keys():
-                            tg_username = db_user["username"]
-                    except Exception:
-                        pass
-
-                    # Вызов общей функции для выдачи доступа и отправки инвайта
-                    payment_handlers.grant_access_and_send_invite(
-                        bot=bot,
-                        user_id=user_id,
-                        course_id=str(course_id),
-                        course_name=course_name,
-                        duration_days=duration_days,
-                        channel=channel,
-                        payment_id=f"prodamus_{order_id}",
-                        amount=amount_float,
-                        currency="RUB",
-                        buyer_email=customer_email,
-                        purchase_receipt_msg=(
-                            "Чек об оплате будет отправлен на ваш email в системе Prodamus."
-                        ),
-                        admin_prefix="Оплата (Prodamus)",
-                    )
-
-                    # Дополнительный лог с основными данными вебхука
-                    print(
-                        "[prodamus_webhook] LOG: "
-                        f"user_id={user_id}, username={tg_username}, email={customer_email}, "
-                        f"payment_status={payment_status}, order_id={order_id}, "
-                        f"order_num={order_num}, original_order_num={original_order_num}"
-                    )
-                    
-                except (ValueError, IndexError) as e:
-                    print(f"[prodamus_webhook] ERROR while handling successful payment for order_num '{order_num}': {e}")
-                    return "OK", 200  # Return OK to Prodamus even if parsing fails
-        
-        # 12. Обработка неуспешной оплаты (sign verified but payment_status != 'success')
-        elif payment_status and payment_status != "success":
-            print(f"[prodamus_webhook] Payment failed: status={payment_status}")
-            
-            # Parse order_num to get user_id
-            if ":" in order_num:
-                try:
-                    parts = order_num.split(":", 1)
-                    user_id = int(parts[0])
-                    course_id = parts[1]
-                    
-                    # Get course name for message
-                    try:
-                        courses = get_courses_data()
-                        course = next((x for x in courses if str(x.get("id")) == str(course_id)), None)
-                        course_name = course.get("name", f"ID {course_id}") if course else f"ID {course_id}"
-                    except Exception:
-                        course_name = f"ID {course_id}"
-                    
-                    # Send failed payment message to user
-                    try:
-                        failed_msg = (
-                            f"❌ Оплата курса \"{course_name}\" не была завершена.\n\n"
-                            f"Статус оплаты: {payment_status}\n\n"
-                            f"Если вы произвели оплату, но получили это сообщение, пожалуйста, обратитесь в поддержку."
-                        )
-                        bot.send_message(user_id, failed_msg)
-                        print(f"[prodamus_webhook] Failed payment message sent to user {user_id}")
-                    except Exception as e:
-                        print(f"[prodamus_webhook] ERROR sending failed payment message to user {user_id}: {e}")
-                    
-                except (ValueError, IndexError) as e:
-                    print(f"[prodamus_webhook] ERROR parsing order_num for failed payment '{order_num}': {e}")
-        
-        # Prodamus обычно ждёт просто 200 OK
-        return "OK", 200
-        
-    except Exception as e:
-        print(f"[prodamus_webhook] FATAL ERROR: {e}")
-        traceback.print_exc()
-        return "ERROR", 500
+    from payments.prodamus_webhook import process_webhook
+    return process_webhook(bot)
 
 
 # Configure Telegram webhook at import time when running under WSGI
@@ -524,18 +186,16 @@ try:
                 drop_pending_updates=True,
                 allowed_updates=["message", "callback_query", "pre_checkout_query"]
             )
-            print(f"Webhook set to {WEBHOOK_URL}")
+            log_info("main", f"Webhook set to {WEBHOOK_URL}")
         except Exception as e:
-            print(f"Failed to set webhook: {e}")
-            traceback.print_exc()
+            log_error("main", f"Failed to set webhook: {e}", exc_info=True)
 except Exception as e:
-    print(f"Error in webhook configuration block: {e}")
-    traceback.print_exc()
+    log_error("main", f"Error in webhook configuration block: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
     if USE_WEBHOOK:
-        print("Webhook mode enabled. Run webhook_app.py (WSGI) on your server.")
+        log_info("main", "Webhook mode enabled. Run webhook_app.py (WSGI) on your server.")
     else:
         # Run channel diagnostics on startup
         try:
@@ -546,6 +206,6 @@ if __name__ == "__main__":
                 except Exception:
                     pass
         except Exception as e:
-            print("Channel diagnostics failed on startup:", e)
-        print("Bot started in polling mode...")
+            log_warning("main", f"Channel diagnostics failed on startup: {e}")
+        log_info("main", "Bot started in polling mode...")
         bot.infinity_polling(timeout=60, long_polling_timeout=60)

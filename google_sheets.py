@@ -1,10 +1,23 @@
 # google_sheets.py
+"""Google Sheets integration for courses and texts data."""
+
 import csv
 import requests
 
 from config import GSHEET_ID, GSHEET_COURSES_NAME, GSHEET_TEXTS_NAME, GOOGLE_SHEETS_USE_API, GOOGLE_CREDENTIALS_FILE
+from utils.logger import log_error, log_warning
+
 
 def fetch_sheet_csv(sheet_name: str):
+    """
+    Fetch a Google Sheet as CSV data.
+    
+    Args:
+        sheet_name: Name of the sheet tab to fetch
+        
+    Returns:
+        List of rows, where each row is a list of cell values
+    """
     url = f"https://docs.google.com/spreadsheets/d/{GSHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     resp = requests.get(url, timeout=15)
     resp.raise_for_status()
@@ -13,6 +26,21 @@ def fetch_sheet_csv(sheet_name: str):
     return data
 
 def get_courses_data():
+    """
+    Get courses data from Google Sheets.
+    
+    Supports both CSV export and Google Sheets API.
+    
+    Returns:
+        List of course dictionaries with keys:
+        - id: Course ID
+        - name: Course name
+        - description: Course description
+        - price: Course price (float)
+        - duration_days: Access duration in days (0 = unlimited)
+        - image_url: Course image URL
+        - channel: Telegram channel ID or username
+    """
     if GOOGLE_SHEETS_USE_API:
         try:
             import gspread
@@ -102,6 +130,14 @@ def get_courses_data():
         return courses
 
 def get_texts_data():
+    """
+    Get texts data from Google Sheets.
+    
+    Supports both CSV export and Google Sheets API.
+    
+    Returns:
+        Dictionary mapping text keys to values (e.g., {"welcome_message": "Hello", ...})
+    """
     if GOOGLE_SHEETS_USE_API:
         try:
             import gspread

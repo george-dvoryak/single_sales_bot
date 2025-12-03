@@ -12,6 +12,7 @@ from typing import Dict, Optional
 import requests
 
 from config import IMAGES_DIR
+from utils.logger import log_info, log_error, log_warning
 
 # In-memory cache: original URL -> local file path
 _IMAGE_CACHE: Dict[str, str] = {}
@@ -82,10 +83,10 @@ def _download_image(url: str) -> Optional[str]:
         with open(local_path, "wb") as f:
             f.write(resp.content)
         _IMAGE_CACHE[url] = local_path
-        print(f"[images] Cached image {url} -> {local_path}")
+        log_info("images", f"Cached image {url} -> {local_path}")
         return local_path
     except Exception as e:
-        print(f"[images] Failed to download image {url}: {e}")
+        log_error("images", f"Failed to download image {url}: {e}")
         return None
 
 
@@ -106,7 +107,7 @@ def preload_images_for_bot(get_courses_data, texts: Dict[str, str]) -> None:
                 if url:
                     urls.add(url)
         except Exception as e:
-            print(f"[images] Could not fetch courses for image preload: {e}")
+            log_warning("images", f"Could not fetch courses for image preload: {e}")
 
         # Text-based images
         for key in ("welcome_image_url", "catalog_image_url"):
@@ -115,14 +116,14 @@ def preload_images_for_bot(get_courses_data, texts: Dict[str, str]) -> None:
                 urls.add(url)
 
         if not urls:
-            print("[images] No image URLs found to preload.")
+            log_info("images", "No image URLs found to preload.")
             return
 
-        print(f"[images] Preloading {len(urls)} images into '{IMAGES_DIR}'")
+        log_info("images", f"Preloading {len(urls)} images into '{IMAGES_DIR}'")
         for url in urls:
             _download_image(url)
     except Exception as e:
-        print(f"[images] FATAL: error during image preloading: {e}")
+        log_error("images", f"Fatal error during image preloading: {e}")
 
 
 def get_local_image_path(url: str) -> Optional[str]:

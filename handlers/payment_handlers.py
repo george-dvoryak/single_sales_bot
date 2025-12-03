@@ -3,7 +3,7 @@
 
 import re
 from telebot import types
-from google_sheets import get_courses_data, get_texts_data
+from google_sheets import get_courses_data
 from db import (
     has_active_subscription, add_purchase, add_user,
     create_prodamus_payment, update_prodamus_payment_url
@@ -11,19 +11,14 @@ from db import (
 from payments.yookassa import create_invoice, send_receipt_to_tax
 from payments.prodamus import generate_order_num, build_payment_link, get_payment_url
 from utils.text_utils import strip_html
+from utils.text_loader import get_text
+from utils.logger import log_info, log_error, log_warning
 from config import ADMIN_IDS, CURRENCY
 
 
-# Load texts
-texts = {}
-try:
-    texts = get_texts_data()
-except Exception as e:
-    print("Warning: could not fetch texts from Google Sheets:", e)
-
-COURSE_NOT_AVAILABLE_MSG = texts.get("course_not_available_message", "Извините, курс сейчас недоступен.")
-PURCHASE_SUCCESS_MSG = texts.get("purchase_success_message", "Оплата успешно выполнена! Вам предоставлен доступ к курсу {course_name}.")
-PURCHASE_RECEIPT_MSG = texts.get("purchase_receipt_message", "Чек об оплате будет отправлен на ваш email в системе YooKassa/Мой Налог.")
+COURSE_NOT_AVAILABLE_MSG = get_text("course_not_available_message", "Извините, курс сейчас недоступен.")
+PURCHASE_SUCCESS_MSG = get_text("purchase_success_message", "Оплата успешно выполнена! Вам предоставлен доступ к курсу {course_name}.")
+PURCHASE_RECEIPT_MSG = get_text("purchase_receipt_message", "Чек об оплате будет отправлен на ваш email в системе YooKassa/Мой Налог.")
 
 
 def grant_access_and_send_invite(
@@ -53,7 +48,7 @@ def grant_access_and_send_invite(
         duration_days,
         payment_id=payment_id,
     )
-    print(f"[payments_common] Purchase added: user_id={user_id}, course_id={course_id}, expiry_ts={expiry_ts}")
+    log_info("payments_common", f"Purchase added: user_id={user_id}, course_id={course_id}, expiry_ts={expiry_ts}")
 
     # 2. Create invite link (if channel configured)
     invite_link = None
@@ -65,9 +60,9 @@ def grant_access_and_send_invite(
                 expire_date=None,
             )
             invite_link = invite.invite_link
-            print(f"[payments_common] Invite link created: {invite_link}")
+            log_info("payments_common", f"Invite link created: {invite_link}")
         except Exception as e:
-            print(f"[payments_common] create_chat_invite_link failed for {channel}: {e}")
+            log_error("payments_common", f"create_chat_invite_link failed for {channel}: {e}")
 
     # 3. Prepare and send message to user
     clean_course_name = strip_html(course_name) if course_name else f"ID {course_id}"
@@ -85,9 +80,9 @@ def grant_access_and_send_invite(
             bot.send_message(user_id, text, reply_markup=kb)
         else:
             bot.send_message(user_id, text)
-        print(f"[payments_common] Success message sent to user {user_id}, invite_link={invite_link}")
+        log_info("payments_common", f"Success message sent to user {user_id}, invite_link={invite_link}")
     except Exception as e:
-        print(f"[payments_common] ERROR sending message to user {user_id}: {e}")
+        log_error("payments_common", f"Error sending message to user {user_id}: {e}")
 
     # 4. Notify admins
     try:
@@ -103,7 +98,7 @@ def grant_access_and_send_invite(
             except Exception:
                 pass
     except Exception as e:
-        print(f"[payments_common] ERROR notifying admins: {e}")
+        log_error("payments_common", f"Error notifying admins: {e}")
 
 
 def register_handlers(bot):
@@ -158,7 +153,7 @@ def register_handlers(bot):
                 return
             bot.answer_pre_checkout_query(q.id, ok=True)
         except Exception as e:
-            print("pre_checkout error:", e)
+            log_error("payment_handlers", f"pre_checkout error: {e}")
             bot.answer_pre_checkout_query(q.id, ok=False, error_message="Ошибка проверки заказа.")
 
     @bot.message_handler(content_types=['successful_payment'])
@@ -218,7 +213,7 @@ def register_handlers(bot):
             clean_receipt_name = strip_html(course_name) if course_name else f"ID {course_id}"
             send_receipt_to_tax(user_id, clean_receipt_name, amount, buyer_email)
         except Exception as e:
-            print("send_receipt_to_tax error:", e)
+            log_error("payment_handlers", f"send_receipt_to_tax error: {e}")
 
     # Prodamus payment handlers
     @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_prodamus_"))

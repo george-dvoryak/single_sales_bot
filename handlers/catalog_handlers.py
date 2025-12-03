@@ -2,22 +2,16 @@
 """Catalog and course viewing handlers."""
 
 from telebot import types
-from google_sheets import get_courses_data, get_texts_data
+from google_sheets import get_courses_data
 from db import has_active_subscription
 from utils.keyboards import create_catalog_keyboard, create_course_buttons
 from utils.text_utils import strip_html
 from utils.images import get_local_image_path
+from utils.text_loader import get_text, get_texts
+from utils.logger import log_error, log_warning
 
-
-# Load texts
-texts = {}
-try:
-    texts = get_texts_data()
-except Exception as e:
-    print("Warning: could not fetch texts from Google Sheets:", e)
-
-CATALOG_TITLE = texts.get("catalog_title", "Каталог курсов:")
-ALREADY_PURCHASED_MSG = texts.get("already_purchased_message", "У вас уже есть доступ к этому курсу.")
+CATALOG_TITLE = get_text("catalog_title", "Каталог курсов:")
+ALREADY_PURCHASED_MSG = get_text("already_purchased_message", "У вас уже есть доступ к этому курсу.")
 
 
 def register_handlers(bot):
@@ -36,7 +30,7 @@ def register_handlers(bot):
                     bot.send_message(user_id, error_msg)
             else:
                 bot.send_message(user_id, error_msg)
-            print("Error fetching courses:", e)
+            log_error("catalog_handlers", f"Error fetching courses: {e}")
             return
         
         if not courses:
@@ -51,6 +45,7 @@ def register_handlers(bot):
             return
 
         kb = create_catalog_keyboard(courses)
+        texts = get_texts()
         banner_url = texts.get("catalog_image_url")
         caption = texts.get("catalog_text", CATALOG_TITLE)
         
@@ -70,14 +65,14 @@ def register_handlers(bot):
                             with open(local_path, "rb") as photo:
                                 bot.send_photo(user_id, photo, caption=caption, reply_markup=kb)
                         except Exception as e:
-                            print(f"[catalog_handlers] send_photo local catalog banner failed: {e}")
+                            log_warning("catalog_handlers", f"send_photo local catalog banner failed: {e}")
                             bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
                     else:
                         bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
                 else:
                     bot.send_message(user_id, caption, reply_markup=kb)
             except Exception as e:
-                print(f"[catalog_handlers] send catalog banner failed, fallback to text: {e}")
+                log_warning("catalog_handlers", f"send catalog banner failed, fallback to text: {e}")
                 bot.send_message(user_id, caption, reply_markup=kb)
         else:
             # Send new message
@@ -89,14 +84,14 @@ def register_handlers(bot):
                             with open(local_path, "rb") as photo:
                                 bot.send_photo(user_id, photo, caption=caption, reply_markup=kb)
                         except Exception as e:
-                            print(f"[catalog_handlers] send_photo local catalog banner (no-edit) failed: {e}")
+                            log_warning("catalog_handlers", f"send_photo local catalog banner (no-edit) failed: {e}")
                             bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
                     else:
                         bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
                 else:
                     bot.send_message(user_id, caption, reply_markup=kb)
             except Exception as e:
-                print(f"[catalog_handlers] send catalog banner (no-edit) failed, fallback to text: {e}")
+                log_warning("catalog_handlers", f"send catalog banner (no-edit) failed, fallback to text: {e}")
                 bot.send_message(user_id, caption, reply_markup=kb)
 
     @bot.message_handler(func=lambda m: m.text == "Каталог")
@@ -142,7 +137,7 @@ def register_handlers(bot):
                         invite = bot.create_chat_invite_link(chat_id=channel_id, member_limit=1, expire_date=None)
                         invite_link = invite.invite_link
                     except Exception as e:
-                        print("Invite link error:", e)
+                        log_error("catalog_handlers", f"Invite link error: {e}")
                     if invite_link:
                         ikb.add(types.InlineKeyboardButton("Перейти в канал курса", url=invite_link))
             ikb.add(types.InlineKeyboardButton("⬅️ Назад к каталогу", callback_data="back_to_catalog"))
@@ -186,7 +181,7 @@ def register_handlers(bot):
                         return
                     except Exception as e:
                         # If edit fails, delete old message and send new one
-                        print(f"Failed to edit message media: {e}")
+                        log_warning("catalog_handlers", f"Failed to edit message media: {e}")
                         try:
                             bot.delete_message(chat_id=c.message.chat.id, message_id=c.message.message_id)
                         except Exception:
@@ -198,7 +193,7 @@ def register_handlers(bot):
                         with open(local_path, "rb") as photo:
                             bot.send_photo(user_id, photo, caption=text, reply_markup=ikb)
                     except Exception as e:
-                        print(f"[catalog_handlers] send_photo local course image failed: {e}")
+                        log_warning("catalog_handlers", f"send_photo local course image failed: {e}")
                         bot.send_photo(user_id, image_url, caption=text, reply_markup=ikb)
                 else:
                     bot.send_photo(user_id, image_url, caption=text, reply_markup=ikb)
@@ -215,14 +210,14 @@ def register_handlers(bot):
                         bot.edit_message_text(text, chat_id=c.message.chat.id, message_id=c.message.message_id, reply_markup=ikb)
                         message_sent = True
                     except Exception as e:
-                        print(f"Failed to edit message text: {e}")
+                        log_warning("catalog_handlers", f"Failed to edit message text: {e}")
                         # If edit fails, send new message
                         bot.send_message(user_id, text, reply_markup=ikb)
                         message_sent = True
             bot.answer_callback_query(c.id)
         except Exception as e:
             # Fallback: send text message if everything else fails (only if we haven't sent anything yet)
-            print(f"Error in course handler: {e}")
+            log_error("catalog_handlers", f"Error in course handler: {e}")
             if not message_sent:
                 bot.send_message(user_id, text, reply_markup=ikb)
             bot.answer_callback_query(c.id)

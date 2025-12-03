@@ -1,12 +1,21 @@
 # db.py
+"""Database operations for the bot."""
+
 import sqlite3
 import time
 
 from config import DATABASE_PATH
+from utils.logger import log_error, log_warning
 
 _conn = None
 
 def get_connection():
+    """
+    Get or create database connection (singleton pattern).
+    
+    Returns:
+        sqlite3.Connection: Database connection
+    """
     global _conn
     if _conn is None:
         _conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
@@ -15,7 +24,14 @@ def get_connection():
         init_db(_conn)
     return _conn
 
+
 def init_db(conn):
+    """
+    Initialize database tables if they don't exist.
+    
+    Args:
+        conn: sqlite3.Connection object
+    """
     cur = conn.cursor()
     cur.execute(
         """
@@ -59,6 +75,13 @@ def init_db(conn):
     conn.commit()
 
 def add_user(user_id: int, username: str = None):
+    """
+    Add or update a user in the database.
+    
+    Args:
+        user_id: Telegram user ID
+        username: Telegram username (optional)
+    """
     conn = get_connection()
     cur = conn.cursor()
     try:
@@ -68,12 +91,35 @@ def add_user(user_id: int, username: str = None):
     conn.commit()
 
 def get_user(user_id: int):
+    """
+    Get user by ID.
+    
+    Args:
+        user_id: Telegram user ID
+        
+    Returns:
+        sqlite3.Row or None: User record if found
+    """
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("SELECT * FROM users WHERE user_id = ?;", (user_id,))
     return cur.fetchone()
 
 def add_purchase(user_id: int, course_id: str, course_name: str, channel_id: str, duration_days: int, payment_id: str = None):
+    """
+    Add a purchase record (grant course access).
+    
+    Args:
+        user_id: Telegram user ID
+        course_id: Course ID
+        course_name: Course name
+        channel_id: Telegram channel ID or username
+        duration_days: Access duration in days (0 or negative = unlimited)
+        payment_id: Payment transaction ID (optional)
+        
+    Returns:
+        int: Expiry timestamp (UNIX timestamp)
+    """
     conn = get_connection()
     cur = conn.cursor()
     now = int(time.time())
@@ -101,6 +147,15 @@ def add_purchase(user_id: int, course_id: str, course_name: str, channel_id: str
     return expiry_ts
 
 def get_active_subscriptions(user_id: int):
+    """
+    Get all active subscriptions for a user.
+    
+    Args:
+        user_id: Telegram user ID
+        
+    Returns:
+        List of subscription records (sqlite3.Row objects)
+    """
     conn = get_connection()
     cur = conn.cursor()
     now = int(time.time())
@@ -114,6 +169,16 @@ def get_active_subscriptions(user_id: int):
     return cur.fetchall()
 
 def has_active_subscription(user_id: int, course_id: str):
+    """
+    Check if user has an active subscription to a course.
+    
+    Args:
+        user_id: Telegram user ID
+        course_id: Course ID
+        
+    Returns:
+        bool: True if user has active subscription
+    """
     conn = get_connection()
     cur = conn.cursor()
     now = int(time.time())
@@ -128,7 +193,12 @@ def has_active_subscription(user_id: int, course_id: str):
 def mark_subscription_expired(user_id: int, course_id: str):
     """
     Mark subscription as expired by setting expiry to 0 (processed flag).
+    
     Using 0 instead of current time to distinguish processed from unprocessed expired subscriptions.
+    
+    Args:
+        user_id: Telegram user ID
+        course_id: Course ID
     """
     conn = get_connection()
     cur = conn.cursor()
@@ -144,7 +214,11 @@ def mark_subscription_expired(user_id: int, course_id: str):
 def get_expired_subscriptions():
     """
     Get subscriptions that have expired but haven't been processed yet.
+    
     Only returns subscriptions where expiry > 0 (not yet marked as processed).
+    
+    Returns:
+        List of expired subscription records (sqlite3.Row objects)
     """
     conn = get_connection()
     cur = conn.cursor()
@@ -161,7 +235,12 @@ def get_expired_subscriptions():
     return cur.fetchall()
 
 def get_all_active_subscriptions():
-    """Get all active subscriptions for all users (admin function)"""
+    """
+    Get all active subscriptions for all users (admin function).
+    
+    Returns:
+        List of active subscription records (sqlite3.Row objects)
+    """
     conn = get_connection()
     cur = conn.cursor()
     now = int(time.time())
@@ -179,7 +258,19 @@ def get_all_active_subscriptions():
 
 # Prodamus payment tracking functions
 def create_prodamus_payment(order_id: str, user_id: int, course_id: str, customer_email: str, order_num: str):
-    """Create a new Prodamus payment record"""
+    """
+    Create a new Prodamus payment record.
+    
+    Args:
+        order_id: Order ID (unique identifier)
+        user_id: Telegram user ID
+        course_id: Course ID
+        customer_email: Customer email address
+        order_num: Order number (format: user_id_course_id_timestamp)
+        
+    Returns:
+        bool: True if created successfully, False if duplicate or error
+    """
     conn = get_connection()
     cur = conn.cursor()
     now = int(time.time())
@@ -198,13 +289,19 @@ def create_prodamus_payment(order_id: str, user_id: int, course_id: str, custome
         return False
     except sqlite3.OperationalError as e:
         # Database is locked or other operational issue – let caller retry or fail gracefully
-        print("create_prodamus_payment OperationalError:", e)
+        log_warning("db", f"create_prodamus_payment OperationalError: {e}")
         time.sleep(0.1)
         return False
 
 
 def update_prodamus_payment_url(order_id: str, payment_url: str):
-    """Update payment URL for a Prodamus payment"""
+    """
+    Update payment URL for a Prodamus payment.
+    
+    Args:
+        order_id: Order ID
+        payment_url: Payment URL from Prodamus
+    """
     conn = get_connection()
     cur = conn.cursor()
     now = int(time.time())
@@ -220,7 +317,13 @@ def update_prodamus_payment_url(order_id: str, payment_url: str):
 
 
 def update_prodamus_payment_status(order_id: str, payment_status: str):
-    """Update payment status for a Prodamus payment"""
+    """
+    Update payment status for a Prodamus payment.
+    
+    Args:
+        order_id: Order ID or order_num
+        payment_status: Payment status (e.g., "success", "pending", "failed")
+    """
     conn = get_connection()
     cur = conn.cursor()
     now = int(time.time())
@@ -236,7 +339,15 @@ def update_prodamus_payment_status(order_id: str, payment_status: str):
 
 
 def get_prodamus_payment(order_id: str):
-    """Get Prodamus payment by order_id"""
+    """
+    Get Prodamus payment by order_id.
+    
+    Args:
+        order_id: Order ID
+        
+    Returns:
+        sqlite3.Row or None: Payment record if found
+    """
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
@@ -249,7 +360,15 @@ def get_prodamus_payment(order_id: str):
 
 
 def get_prodamus_payment_by_order_num(order_num: str):
-    """Get Prodamus payment by order_num"""
+    """
+    Get Prodamus payment by order_num.
+    
+    Args:
+        order_num: Order number (format: user_id_course_id_timestamp)
+        
+    Returns:
+        sqlite3.Row or None: Payment record if found
+    """
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(

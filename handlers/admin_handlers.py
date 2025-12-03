@@ -3,11 +3,13 @@
 
 import sqlite3
 import time
+import datetime
 from telebot import types
 from db import get_all_active_subscriptions, get_user, get_expired_subscriptions, mark_subscription_expired, get_connection
 from utils.text_utils import strip_html
 from utils.channel import remove_user_from_channel, check_course_channels
 from google_sheets import get_courses_data
+from utils.logger import log_error, log_warning
 from config import ADMIN_IDS, DATABASE_PATH, GSHEET_ID
 
 
@@ -50,7 +52,6 @@ def register_handlers(bot):
                     course_name = s["course_name"]
                     clean_course_name = strip_html(course_name) if course_name else "Курс"
                     expiry_ts = s["expiry"]
-                    import datetime
                     dt = datetime.datetime.fromtimestamp(expiry_ts)
                     dstr = dt.strftime("%Y-%m-%d %H:%M")
                     text += f"  • {clean_course_name} (до {dstr})\n"
@@ -72,7 +73,7 @@ def register_handlers(bot):
                 bot.send_message(user_id, text, disable_web_page_preview=True)
                 
         except Exception as e:
-            print(f"Error in handle_admin_all_subscriptions: {e}")
+            log_error("admin_handlers", f"Error in handle_admin_all_subscriptions: {e}")
             bot.send_message(user_id, f"Ошибка при получении подписок: {e}")
 
     @bot.message_handler(func=lambda m: m.text == "📋 Google Sheets")
@@ -163,7 +164,7 @@ def register_handlers(bot):
                     processed += 1
                 except Exception as e:
                     failed += 1
-                    print(f"Error processing expired subscription: {e}")
+                    log_error("admin_handlers", f"Error processing expired subscription: {e}")
             
             report += f"✅ Обработано: {processed}\n"
             if failed > 0:
@@ -174,7 +175,7 @@ def register_handlers(bot):
         except Exception as e:
             bot.reply_to(message, f"❌ Ошибка при очистке: {e}")
             import traceback
-            print(f"Cleanup error: {traceback.format_exc()}")
+            log_error("admin_handlers", f"Cleanup error: {traceback.format_exc()}")
 
     @bot.message_handler(commands=['broadcast_all', 'broadcast_buyers', 'broadcast_nonbuyers'])
     def handle_broadcast(message: types.Message):
@@ -202,7 +203,7 @@ def register_handlers(bot):
             recipients = [r[0] for r in rows]
             conn.close()
         except Exception as e:
-            print(f"Broadcast database error: {e}")
+            log_error("admin_handlers", f"Broadcast database error: {e}")
             bot.reply_to(message, f"Ошибка при получении списка получателей: {e}")
             return
 
@@ -216,7 +217,7 @@ def register_handlers(bot):
                 failed += 1
                 # Log first few failures for debugging
                 if failed <= 3:
-                    print(f"Failed to send broadcast to user {uid}: {e}")
+                    log_warning("admin_handlers", f"Failed to send broadcast to user {uid}: {e}")
         total = len(recipients)
         reply_msg = f"Отправлено {sent} из {total} пользователям."
         if failed > 0:

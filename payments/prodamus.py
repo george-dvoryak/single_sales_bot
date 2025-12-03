@@ -6,6 +6,7 @@ import urllib.parse
 import requests
 from typing import Optional
 from config import PRODAMUS_BASE_URL
+from utils.logger import log_error, log_warning
 
 
 def generate_order_num(user_id: int, course_id: str) -> str:
@@ -68,9 +69,9 @@ def get_payment_url(payment_link: str) -> Optional[str]:
         if response.status_code == 200:
             return response.url
         else:
-            print(f"[prodamus] Error getting payment URL: status {response.status_code}")
+            log_warning("prodamus", f"Error getting payment URL: status {response.status_code}")
             return None
     except Exception as e:
-        print(f"[prodamus] Exception getting payment URL: {e}")
+        log_error("prodamus", f"Exception getting payment URL: {e}")
         return None
 

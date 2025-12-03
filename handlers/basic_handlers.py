@@ -4,21 +4,14 @@
 import datetime
 from telebot import types
 from db import add_user, get_active_subscriptions
-from google_sheets import get_texts_data
 from utils.keyboards import get_main_menu_keyboard
 from utils.text_utils import strip_html
 from utils.images import get_local_image_path
+from utils.text_loader import get_text
+from utils.logger import log_error, log_warning
 
-
-# Load customizable texts
-texts = {}
-try:
-    texts = get_texts_data()
-except Exception as e:
-    print("Warning: could not fetch texts from Google Sheets:", e)
-
-WELCOME_MSG = texts.get("welcome_message", "Здравствуйте! Этот бот поможет вам купить курсы по макияжу.\nНиже находится меню.")
-SUPPORT_MSG = texts.get("support_message", "Если у вас есть вопросы, напишите нам в поддержку.")
+WELCOME_MSG = get_text("welcome_message", "Здравствуйте! Этот бот поможет вам купить курсы по макияжу.\nНиже находится меню.")
+SUPPORT_MSG = get_text("support_message", "Если у вас есть вопросы, напишите нам в поддержку.")
 
 
 def register_handlers(bot):
@@ -32,6 +25,8 @@ def register_handlers(bot):
 
         # Use dynamic keyboard that includes admin buttons if user is admin
         keyboard = get_main_menu_keyboard(user_id)
+        from utils.text_loader import get_texts
+        texts = get_texts()
         welcome_image_url = texts.get("welcome_image_url")
         try:
             if welcome_image_url:
@@ -41,7 +36,7 @@ def register_handlers(bot):
                         with open(local_path, "rb") as photo:
                             bot.send_photo(user_id, photo, caption=WELCOME_MSG, reply_markup=keyboard)
                     except Exception as e:
-                        print(f"[basic_handlers] send_photo local welcome image failed: {e}")
+                        log_warning("basic_handlers", f"send_photo local welcome image failed: {e}")
                         # Fallback to URL if local file send fails
                         bot.send_photo(user_id, welcome_image_url, caption=WELCOME_MSG, reply_markup=keyboard)
                 else:
@@ -50,7 +45,7 @@ def register_handlers(bot):
             else:
                 bot.send_message(user_id, WELCOME_MSG, reply_markup=keyboard)
         except Exception as e:
-            print(f"[basic_handlers] send_photo welcome failed, fallback to text: {e}")
+            log_warning("basic_handlers", f"send_photo welcome failed, fallback to text: {e}")
             bot.send_message(user_id, WELCOME_MSG, reply_markup=keyboard)
 
     @bot.message_handler(func=lambda m: m.text == "Активные подписки")

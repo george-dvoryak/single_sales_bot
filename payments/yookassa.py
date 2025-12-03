@@ -67,11 +67,13 @@ def create_invoice(bot, user_id: int, course_id: str, course_name: str, price: f
         )
         return True
     except Exception as e:
-        print("send_invoice (YK) error:", e)
+        from utils.logger import log_error
+        log_error("yookassa", f"send_invoice error: {e}")
         return False
 
 
 def send_receipt_to_tax(user_id: int, course_name: str, amount: float, buyer_email: str = None):
     """Placeholder for 'Мой Налог' integration (YooKassa auto-fiscalization can be enabled in account settings)."""
-    print(f"[Receipt] user={user_id}, product='{course_name}', amount={amount}, email={buyer_email}")
+    from utils.logger import log_info
+    log_info("yookassa", f"Receipt: user={user_id}, product='{course_name}', amount={amount}, email={buyer_email}")
 
