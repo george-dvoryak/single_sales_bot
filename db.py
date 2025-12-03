@@ -39,6 +39,23 @@ def init_db(conn):
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prodamus_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id TEXT UNIQUE,
+            user_id INTEGER,
+            course_id TEXT,
+            customer_email TEXT,
+            payment_url TEXT,
+            payment_status TEXT,
+            order_num TEXT,
+            created_at INTEGER,
+            updated_at INTEGER,
+            FOREIGN KEY(user_id) REFERENCES users(user_id)
+        )
+        """
+    )
     conn.commit()
 
 def add_user(user_id: int, username: str = None):
@@ -158,3 +175,82 @@ def get_all_active_subscriptions():
         (now,)
     )
     return cur.fetchall()
+
+
+# Prodamus payment tracking functions
+def create_prodamus_payment(order_id: str, user_id: int, course_id: str, customer_email: str, order_num: str):
+    """Create a new Prodamus payment record"""
+    conn = get_connection()
+    cur = conn.cursor()
+    now = int(time.time())
+    try:
+        cur.execute(
+            """
+            INSERT INTO prodamus_payments (order_id, user_id, course_id, customer_email, order_num, payment_status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?);
+            """,
+            (order_id, user_id, course_id, customer_email, order_num, now, now)
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        # Order ID already exists
+        return False
+
+
+def update_prodamus_payment_url(order_id: str, payment_url: str):
+    """Update payment URL for a Prodamus payment"""
+    conn = get_connection()
+    cur = conn.cursor()
+    now = int(time.time())
+    cur.execute(
+        """
+        UPDATE prodamus_payments 
+        SET payment_url = ?, updated_at = ?
+        WHERE order_id = ?;
+        """,
+        (payment_url, now, order_id)
+    )
+    conn.commit()
+
+
+def update_prodamus_payment_status(order_id: str, payment_status: str):
+    """Update payment status for a Prodamus payment"""
+    conn = get_connection()
+    cur = conn.cursor()
+    now = int(time.time())
+    cur.execute(
+        """
+        UPDATE prodamus_payments 
+        SET payment_status = ?, updated_at = ?
+        WHERE order_id = ?;
+        """,
+        (payment_status, now, order_id)
+    )
+    conn.commit()
+
+
+def get_prodamus_payment(order_id: str):
+    """Get Prodamus payment by order_id"""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT * FROM prodamus_payments WHERE order_id = ?;
+        """,
+        (order_id,)
+    )
+    return cur.fetchone()
+
+
+def get_prodamus_payment_by_order_num(order_num: str):
+    """Get Prodamus payment by order_num"""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT * FROM prodamus_payments WHERE order_num = ?;
+        """,
+        (order_num,)
+    )
+    return cur.fetchone()

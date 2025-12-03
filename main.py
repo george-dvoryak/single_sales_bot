@@ -47,7 +47,10 @@ try:
     from utils.channel import check_course_channels
     from google_sheets import get_courses_data, get_texts_data
     from utils.images import preload_images_for_bot
-    from db import add_purchase, add_user, has_active_subscription
+    from db import (
+        add_purchase, add_user, has_active_subscription,
+        update_prodamus_payment_status, get_prodamus_payment_by_order_num
+    )
     from utils.text_utils import strip_html
     _debug_log("main.py", "Handlers and utilities imported successfully")
 except Exception as e:
@@ -324,21 +327,66 @@ def _prodamus_webhook():
         print(f"[prodamus_webhook] Calculated signature: {calculated_signature[:20]}...")
         
         # 9. Сравниваем подписи
-        if not hmac.compare_digest(
+        signature_valid = hmac.compare_digest(
             provided_signature.lower(),
             calculated_signature.lower()
-        ):
+        )
+        
+        if not signature_valid:
             print(f"[prodamus_webhook] ERROR: Invalid signature!")
             print(f"[prodamus_webhook] Provided: {provided_signature}")
             print(f"[prodamus_webhook] Calculated: {calculated_signature}")
             print(f"[prodamus_webhook] Message to sign (first 500 chars): {msg_to_sign[:500]}")
+            
+            # Notify admins about unverified signature
+            # Try to extract order info from payload if available
+            try:
+                # Parse payload to get order info for admin notification
+                try:
+                    payload_for_notification = json.loads(msg_to_sign)
+                    order_id = payload_for_notification.get("order_id", "unknown")
+                    order_num = payload_for_notification.get("order_num", "unknown")
+                    payment_status = payload_for_notification.get("payment_status", "unknown")
+                except Exception:
+                    order_id = "unknown"
+                    order_num = "unknown"
+                    payment_status = "unknown"
+                
+                admin_text = (
+                    f"⚠️ Prodamus webhook с неподтверждённой подписью!\n\n"
+                    f"Order ID: {order_id}\n"
+                    f"Order Num: {order_num}\n"
+                    f"Payment Status: {payment_status}\n"
+                    f"Provided Sign: {provided_signature[:20]}...\n"
+                    f"Calculated Sign: {calculated_signature[:20]}...\n\n"
+                    f"Данные не обработаны из-за неверной подписи."
+                )
+                for aid in ADMIN_IDS:
+                    try:
+                        bot.send_message(aid, admin_text)
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"[prodamus_webhook] ERROR notifying admins about invalid signature: {e}")
+            
             abort(403, "Invalid signature")
         
         print("[prodamus_webhook] Signature verified successfully")
         print(f"[prodamus_webhook] Payment status: {payload.get('payment_status')}")
         
-        # 10. Обработка успешной оплаты
-        if payload.get("payment_status") == "success":
+        # 10. Update payment status in database
+        order_id = payload.get("order_id", "")
+        order_num = payload.get("order_num", "")
+        payment_status = payload.get("payment_status", "")
+        
+        if order_id:
+            try:
+                update_prodamus_payment_status(order_id, payment_status)
+            except Exception as e:
+                print(f"[prodamus_webhook] ERROR updating payment status: {e}")
+        
+        # 11. Обработка успешной оплаты
+        if payment_status == "success":
             order_num = payload.get("order_num", "")
             order_id = payload.get("order_id", "")
             customer_email = payload.get("customer_email", "")
@@ -451,6 +499,41 @@ def _prodamus_webhook():
                     return "OK", 200  # Return OK to Prodamus even if parsing fails
             else:
                 print(f"[prodamus_webhook] WARNING: order_num '{order_num}' does not contain ':' separator")
+        
+        # 12. Обработка неуспешной оплаты (sign verified but payment_status != 'success')
+        elif payment_status and payment_status != "success":
+            print(f"[prodamus_webhook] Payment failed: status={payment_status}")
+            
+            # Parse order_num to get user_id
+            if ":" in order_num:
+                try:
+                    parts = order_num.split(":", 1)
+                    user_id = int(parts[0])
+                    course_id = parts[1]
+                    
+                    # Get course name for message
+                    try:
+                        courses = get_courses_data()
+                        course = next((x for x in courses if str(x.get("id")) == str(course_id)), None)
+                        course_name = course.get("name", f"ID {course_id}") if course else f"ID {course_id}"
+                    except Exception:
+                        course_name = f"ID {course_id}"
+                    
+                    # Send failed payment message to user
+                    try:
+                        clean_course_name = strip_html(course_name) if course_name else f"ID {course_id}"
+                        failed_msg = (
+                            f"❌ Оплата курса \"{clean_course_name}\" не была завершена.\n\n"
+                            f"Статус оплаты: {payment_status}\n\n"
+                            f"Если вы произвели оплату, но получили это сообщение, пожалуйста, обратитесь в поддержку."
+                        )
+                        bot.send_message(user_id, failed_msg)
+                        print(f"[prodamus_webhook] Failed payment message sent to user {user_id}")
+                    except Exception as e:
+                        print(f"[prodamus_webhook] ERROR sending failed payment message to user {user_id}: {e}")
+                    
+                except (ValueError, IndexError) as e:
+                    print(f"[prodamus_webhook] ERROR parsing order_num for failed payment '{order_num}': {e}")
         
         # Prodamus обычно ждёт просто 200 OK
         return "OK", 200

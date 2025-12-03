@@ -1,10 +1,17 @@
 # handlers/payment_handlers.py
 """Payment processing handlers."""
 
+import re
 from telebot import types
 from google_sheets import get_courses_data, get_texts_data
-from db import has_active_subscription, add_purchase, add_user
+from db import (
+    has_active_subscription, add_purchase, add_user,
+    create_prodamus_payment, update_prodamus_payment_url
+)
 from payments.yookassa import create_invoice, send_receipt_to_tax
+from payments.prodamus import (
+    generate_order_id, generate_order_num, build_payment_link, get_payment_url
+)
 from utils.text_utils import strip_html
 from config import ADMIN_IDS, CURRENCY
 
@@ -157,4 +164,112 @@ def register_handlers(bot):
             send_receipt_to_tax(user_id, clean_receipt_name, amount, buyer_email)
         except Exception as e:
             print("send_receipt_to_tax error:", e)
+
+    # Prodamus payment handlers
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_prodamus_"))
+    def cb_pay_prodamus(c: types.CallbackQuery):
+        """Handle Prodamus payment button click - ask for email"""
+        user_id = c.from_user.id
+        course_id = c.data.split("_", 2)[2]
+        
+        try:
+            courses = get_courses_data()
+        except Exception:
+            bot.answer_callback_query(c.id, "Не удалось получить данные курса.", show_alert=True)
+            return
+        
+        course = next((x for x in courses if str(x.get("id")) == str(course_id)), None)
+        if not course:
+            bot.answer_callback_query(c.id, COURSE_NOT_AVAILABLE_MSG, show_alert=True)
+            return
+        
+        if has_active_subscription(user_id, str(course_id)):
+            bot.answer_callback_query(c.id, "У вас уже есть этот курс.", show_alert=True)
+            return
+        
+        bot.answer_callback_query(c.id)
+        
+        # Ask for email
+        text = "Для оплаты через Prodamus необходимо указать ваш email адрес.\n\nПожалуйста, отправьте ваш email:"
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
+        bot.send_message(user_id, text, reply_markup=kb)
+        
+        # Register next step handler for email
+        bot.register_next_step_handler_by_chat_id(user_id, lambda m: handle_prodamus_email(bot, m, course_id))
+
+    def handle_prodamus_email(bot, message: types.Message, course_id: str):
+        """Handle email input for Prodamus payment"""
+        user_id = message.from_user.id
+        email = message.text.strip()
+        
+        # Validate email
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, email):
+            text = "❌ Неверный формат email адреса. Пожалуйста, отправьте корректный email:"
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
+            bot.send_message(user_id, text, reply_markup=kb)
+            bot.register_next_step_handler_by_chat_id(user_id, lambda m: handle_prodamus_email(bot, m, course_id))
+            return
+        
+        try:
+            courses = get_courses_data()
+        except Exception:
+            bot.send_message(user_id, "Ошибка: не удалось получить данные курса.")
+            return
+        
+        course = next((x for x in courses if str(x.get("id")) == str(course_id)), None)
+        if not course:
+            bot.send_message(user_id, COURSE_NOT_AVAILABLE_MSG)
+            return
+        
+        course_name = course.get("name", "Курс")
+        price = float(course.get("price", 0))
+        
+        # Generate order_id and order_num
+        order_num = generate_order_num(user_id, course_id)
+        
+        # Try to create order_id, increment attempt if needed
+        attempt = 0
+        order_id = generate_order_id(user_id, course_id, attempt)
+        while not create_prodamus_payment(order_id, user_id, course_id, email, order_num):
+            attempt += 1
+            order_id = generate_order_id(user_id, course_id, attempt)
+            if attempt > 10:  # Safety limit
+                bot.send_message(user_id, "Ошибка: не удалось создать заказ. Попробуйте позже.")
+                return
+        
+        # Build payment link
+        customer_phone = ""  # Optional, can be empty
+        customer_extra = f"Покупка курса через Telegram бот (tg:@{message.from_user.username or 'user'})"
+        clean_course_name = strip_html(course_name)
+        
+        payment_link = build_payment_link(
+            order_id=order_id,
+            order_num=order_num,
+            customer_email=email,
+            customer_phone=customer_phone,
+            course_name=clean_course_name,
+            price=price,
+            customer_extra=customer_extra
+        )
+        
+        # Get actual payment URL
+        bot.send_message(user_id, "⏳ Создаю ссылку на оплату...")
+        payment_url = get_payment_url(payment_link)
+        
+        if not payment_url:
+            bot.send_message(user_id, "❌ Ошибка при создании ссылки на оплату. Попробуйте позже.")
+            return
+        
+        # Update payment URL in database
+        update_prodamus_payment_url(order_id, payment_url)
+        
+        # Send payment link to user
+        text = f"💳 Ссылка на оплату курса \"{clean_course_name}\":\n\n{payment_url}\n\nПосле успешной оплаты доступ к курсу будет предоставлен автоматически."
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("💳 Перейти к оплате", url=payment_url))
+        kb.add(types.InlineKeyboardButton("⬅️ Назад к каталогу", callback_data="back_to_catalog"))
+        bot.send_message(user_id, text, reply_markup=kb)
 
