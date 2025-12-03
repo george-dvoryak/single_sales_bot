@@ -15,6 +15,10 @@ from utils.text_loader import get_text
 from utils.logger import log_info, log_error, log_warning
 from config import ADMIN_IDS, CURRENCY
 
+# State management for Prodamus email collection
+# Maps user_id -> course_id for users awaiting email input
+_prodamus_awaiting_email: dict[int, str] = {}
+
 
 COURSE_NOT_AVAILABLE_MSG = get_text("course_not_available_message", "Извините, курс сейчас недоступен.")
 PURCHASE_SUCCESS_MSG = get_text("purchase_success_message", "Оплата успешно выполнена! Вам предоставлен доступ к курсу {course_name}.")
@@ -103,6 +107,27 @@ def grant_access_and_send_invite(
 
 def register_handlers(bot):
     """Register payment handlers"""
+    
+    # High-priority handler for Prodamus email input (must be registered first)
+    # Exclude commands and menu buttons - only process plain text messages
+    @bot.message_handler(
+        func=lambda m: (
+            m.from_user and 
+            m.from_user.id in _prodamus_awaiting_email and
+            m.text and
+            not m.text.startswith('/') and
+            m.text not in ["Каталог", "Активные подписки", "Поддержка", "Оферта", "📊 Все подписки", "📋 Google Sheets"]
+        ),
+        content_types=['text']
+    )
+    def handle_prodamus_email_input(message: types.Message):
+        """Handle email input for Prodamus payment - high priority handler"""
+        user_id = message.from_user.id
+        if user_id not in _prodamus_awaiting_email:
+            return  # Should not happen, but safety check
+        
+        course_id = _prodamus_awaiting_email[user_id]
+        handle_prodamus_email(bot, message, course_id)
     
     @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_yk_"))
     def cb_pay_yk(c: types.CallbackQuery):
@@ -239,31 +264,45 @@ def register_handlers(bot):
         
         bot.answer_callback_query(c.id)
         
+        # Set state: user is now awaiting email input
+        _prodamus_awaiting_email[user_id] = course_id
+        log_info("payment_handlers", f"User {user_id} awaiting email for course {course_id}")
+        
         # Ask for email
         text = "Для оплаты через Prodamus необходимо указать ваш email адрес.\n\nПожалуйста, отправьте ваш email:"
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
-        msg = bot.send_message(user_id, text, reply_markup=kb)
-        
-        # Register next step handler for email.
-        # Using register_next_step_handler with the sent message is more reliable in webhook mode.
-        bot.register_next_step_handler(msg, lambda m: handle_prodamus_email(bot, m, course_id))
+        bot.send_message(user_id, text, reply_markup=kb)
 
     def handle_prodamus_email(bot, message: types.Message, course_id: str):
         """Handle email input for Prodamus payment"""
         user_id = message.from_user.id
+        
+        # Check if message has text content
+        if not message.text or not message.text.strip():
+            # Invalid input, stay in awaiting email state
+            text = "❌ Неверный формат email адреса. Пожалуйста, отправьте корректный email:"
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
+            bot.send_message(user_id, text, reply_markup=kb)
+            # State remains set, handler will catch next message
+            return
+        
         email = message.text.strip()
         
-        # Validate email
+        # Validate email format
         email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
         if not re.match(email_pattern, email):
             text = "❌ Неверный формат email адреса. Пожалуйста, отправьте корректный email:"
             kb = types.InlineKeyboardMarkup()
             kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
             bot.send_message(user_id, text, reply_markup=kb)
-            # Re-register next step handler to wait for correct email
-            bot.register_next_step_handler(message, lambda m: handle_prodamus_email(bot, m, course_id))
+            # State remains set, handler will catch next message
             return
+        
+        # Email is valid - clear the awaiting state
+        _prodamus_awaiting_email.pop(user_id, None)
+        log_info("payment_handlers", f"User {user_id} provided valid email, proceeding with payment")
         
         try:
             courses = get_courses_data()

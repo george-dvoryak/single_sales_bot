@@ -5,7 +5,7 @@ import re
 import hmac
 import hashlib
 from typing import Dict, Optional
-from flask import request, abort
+from flask import request
 
 from config import PRODAMUS_SECRET_KEY, ADMIN_IDS
 from db import update_prodamus_payment_status, get_user
@@ -244,34 +244,47 @@ def handle_failed_payment(bot, payload: dict) -> None:
     
     log_info("prodamus_webhook", f"Payment failed: status={payment_status}, order_num={order_num}")
     
-    # Parse order_num (legacy format with colon separator)
-    if ":" in order_num:
+    # Parse order_num using the standard parser (handles underscore format: user_id_course_id_timestamp)
+    # Also supports legacy colon format for backward compatibility
+    user_id = None
+    course_id = None
+    
+    if "_" in order_num:
+        # New format: user_id_course_id_timestamp
+        user_id, course_id = parse_order_num(order_num)
+    elif ":" in order_num:
+        # Legacy format: user_id:course_id
         try:
             parts = order_num.split(":", 1)
             user_id = int(parts[0])
             course_id = parts[1]
-            
-            # Get course name
-            try:
-                courses = get_courses_data()
-                course = next((x for x in courses if str(x.get("id")) == str(course_id)), None)
-                course_name = course.get("name", f"ID {course_id}") if course else f"ID {course_id}"
-            except Exception:
-                course_name = f"ID {course_id}"
-            
-            # Send failed payment message to user
-            try:
-                failed_msg = (
-                    f"❌ Оплата курса \"{course_name}\" не была завершена.\n\n"
-                    f"Статус оплаты: {payment_status}\n\n"
-                    f"Если вы произвели оплату, но получили это сообщение, пожалуйста, обратитесь в поддержку."
-                )
-                bot.send_message(user_id, failed_msg)
-                log_info("prodamus_webhook", f"Failed payment message sent to user {user_id}")
-            except Exception as e:
-                log_error("prodamus_webhook", f"Error sending failed payment message to user {user_id}: {e}")
         except (ValueError, IndexError) as e:
-            log_error("prodamus_webhook", f"Error parsing order_num for failed payment '{order_num}': {e}")
+            log_error("prodamus_webhook", f"Error parsing legacy order_num for failed payment '{order_num}': {e}")
+    
+    if not user_id or not course_id:
+        log_warning("prodamus_webhook", f"Could not parse order_num for failed payment: {order_num}")
+        return
+    
+    # Get course name
+    try:
+        courses = get_courses_data()
+        course = next((x for x in courses if str(x.get("id")) == str(course_id)), None)
+        course_name = course.get("name", f"ID {course_id}") if course else f"ID {course_id}"
+    except Exception as e:
+        log_warning("prodamus_webhook", f"Could not fetch course data for failed payment: {e}")
+        course_name = f"ID {course_id}"
+    
+    # Send failed payment message to user
+    try:
+        failed_msg = (
+            f"❌ Оплата курса \"{course_name}\" не была завершена.\n\n"
+            f"Статус оплаты: {payment_status}\n\n"
+            f"Если вы произвели оплату, но получили это сообщение, пожалуйста, обратитесь в поддержку."
+        )
+        bot.send_message(user_id, failed_msg)
+        log_info("prodamus_webhook", f"Failed payment message sent to user {user_id} for course {course_id}")
+    except Exception as e:
+        log_error("prodamus_webhook", f"Error sending failed payment message to user {user_id}: {e}")
 
 
 def notify_admins_invalid_signature(bot, payload_data: dict, provided_signature: str, calculated_signature: str) -> None:
@@ -312,7 +325,7 @@ def process_webhook(bot) -> tuple[str, int]:
         provided_signature = str(request.headers.get("Sign", "")).strip()
         if not provided_signature:
             log_error("prodamus_webhook", "Missing Sign header")
-            abort(400, "Missing Sign header")
+            return "Missing Sign header", 400
         
         # Parse request data
         flat_form = parse_request_data()
@@ -338,7 +351,7 @@ def process_webhook(bot) -> tuple[str, int]:
             except Exception as e:
                 log_error("prodamus_webhook", f"Error preparing admin notification: {e}")
             
-            abort(403, "Invalid signature")
+            return "Invalid signature", 403
         
         log_info("prodamus_webhook", "Signature verified successfully")
         
