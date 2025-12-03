@@ -47,7 +47,7 @@ try:
     from utils.channel import check_course_channels
     from google_sheets import get_courses_data, get_texts_data
     from utils.images import preload_images_for_bot
-    from db import update_prodamus_payment_status, get_prodamus_payment_by_order_num, get_user
+    from db import update_prodamus_payment_status, get_prodamus_payment, get_user
     _debug_log("main.py", "Handlers and utilities imported successfully")
 except Exception as e:
     print(f"[main.py] ERROR importing handlers/utilities: {e}")
@@ -392,6 +392,19 @@ def _prodamus_webhook():
             
             # Парсим order_num в формате "user_id:course_id"
             # Например: "466513805:1" -> user_id=466513805, course_id=1
+            original_order_num = order_num
+
+            # Если в order_num нет двоеточия (как в текущем логе), пробуем восстановить из БД по order_id
+            if ":" not in order_num and order_id:
+                try:
+                    db_payment = get_prodamus_payment(order_id)
+                    if db_payment is not None and "order_num" in db_payment.keys():
+                        restored_num = db_payment["order_num"]
+                        print(f"[prodamus_webhook] Restored order_num from DB by order_id={order_id}: {restored_num}")
+                        order_num = restored_num or order_num
+                except Exception as e:
+                    print(f"[prodamus_webhook] ERROR restoring order_num from DB for order_id={order_id}: {e}")
+
             if ":" in order_num:
                 try:
                     parts = order_num.split(":", 1)
@@ -454,14 +467,18 @@ def _prodamus_webhook():
                     print(
                         "[prodamus_webhook] LOG: "
                         f"user_id={user_id}, username={tg_username}, email={customer_email}, "
-                        f"payment_status={payment_status}, order_id={order_id}, order_num={order_num}"
+                        f"payment_status={payment_status}, order_id={order_id}, "
+                        f"order_num={order_num}, original_order_num={original_order_num}"
                     )
                     
                 except (ValueError, IndexError) as e:
                     print(f"[prodamus_webhook] ERROR parsing order_num '{order_num}': {e}")
                     return "OK", 200  # Return OK to Prodamus even if parsing fails
             else:
-                print(f"[prodamus_webhook] WARNING: order_num '{order_num}' does not contain ':' separator")
+                print(
+                    f"[prodamus_webhook] WARNING: order_num '{order_num}' does not contain ':' separator "
+                    f"(original value: '{original_order_num}'). Cannot derive user_id and course_id."
+                )
         
         # 12. Обработка неуспешной оплаты (sign verified but payment_status != 'success')
         elif payment_status and payment_status != "success":
