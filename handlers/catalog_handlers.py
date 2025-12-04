@@ -10,12 +10,8 @@ from utils.images import get_local_image_path
 from utils.text_loader import get_text, get_texts
 from utils.logger import log_error, log_warning, log_info
 
-# Import state management from payment_handlers to clear it on navigation
-try:
-    from handlers.payment_handlers import _prodamus_awaiting_email
-except ImportError:
-    # Fallback if import fails (shouldn't happen in normal operation)
-    _prodamus_awaiting_email = {}
+# Import shared state management
+from handlers.state import prodamus_awaiting_email
 
 CATALOG_TITLE = get_text("catalog_title", "Каталог курсов:")
 ALREADY_PURCHASED_MSG = get_text("already_purchased_message", "У вас уже есть доступ к этому курсу.")
@@ -105,8 +101,8 @@ def register_handlers(bot):
     def handle_catalog(message: types.Message):
         user_id = message.from_user.id
         # Clear Prodamus email awaiting state if user was in that flow
-        if user_id in _prodamus_awaiting_email:
-            _prodamus_awaiting_email.pop(user_id, None)
+        if user_id in prodamus_awaiting_email:
+            prodamus_awaiting_email.pop(user_id, None)
             log_info("catalog_handlers", f"Cleared awaiting email state for user {user_id} (clicked Каталог)")
         send_catalog_message(user_id)
 
@@ -116,8 +112,8 @@ def register_handlers(bot):
         course_id = c.data.split("_", 1)[1]
         
         # Clear Prodamus email awaiting state if user was in that flow
-        if user_id in _prodamus_awaiting_email:
-            _prodamus_awaiting_email.pop(user_id, None)
+        if user_id in prodamus_awaiting_email:
+            prodamus_awaiting_email.pop(user_id, None)
             log_info("catalog_handlers", f"Cleared awaiting email state for user {user_id} (navigated to course {course_id})")
         try:
             courses = get_courses_data()
@@ -242,8 +238,8 @@ def register_handlers(bot):
     def cb_back_to_catalog(c: types.CallbackQuery):
         # Clear Prodamus email awaiting state if user was in that flow
         user_id = c.from_user.id
-        if user_id in _prodamus_awaiting_email:
-            _prodamus_awaiting_email.pop(user_id, None)
+        if user_id in prodamus_awaiting_email:
+            prodamus_awaiting_email.pop(user_id, None)
             log_info("catalog_handlers", f"Cleared awaiting email state for user {user_id} (navigated to catalog)")
         send_catalog_message(
             user_id,

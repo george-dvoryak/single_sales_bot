@@ -12,11 +12,8 @@ from google_sheets import get_courses_data
 from utils.logger import log_error, log_warning, log_info
 from config import ADMIN_IDS, DATABASE_PATH, GSHEET_ID
 
-# Import state management from payment_handlers to clear it on menu usage
-try:
-    from handlers.payment_handlers import _prodamus_awaiting_email
-except ImportError:
-    _prodamus_awaiting_email = {}
+# Import shared state management
+from handlers.state import prodamus_awaiting_email
 
 
 def register_handlers(bot):
@@ -27,8 +24,8 @@ def register_handlers(bot):
         """Admin handler: show all active subscriptions for all users"""
         user_id = message.from_user.id
         # Clear Prodamus email awaiting state if user was in that flow
-        if user_id in _prodamus_awaiting_email:
-            _prodamus_awaiting_email.pop(user_id, None)
+        if user_id in prodamus_awaiting_email:
+            prodamus_awaiting_email.pop(user_id, None)
             log_info("admin_handlers", f"Cleared awaiting email state for user {user_id} (clicked 📊 Все подписки)")
         
         if user_id not in ADMIN_IDS:
@@ -92,8 +89,8 @@ def register_handlers(bot):
         """Admin handler: open Google Sheets link"""
         user_id = message.from_user.id
         # Clear Prodamus email awaiting state if user was in that flow
-        if user_id in _prodamus_awaiting_email:
-            _prodamus_awaiting_email.pop(user_id, None)
+        if user_id in prodamus_awaiting_email:
+            prodamus_awaiting_email.pop(user_id, None)
             log_info("admin_handlers", f"Cleared awaiting email state for user {user_id} (clicked 📋 Google Sheets)")
         
         if user_id not in ADMIN_IDS:
