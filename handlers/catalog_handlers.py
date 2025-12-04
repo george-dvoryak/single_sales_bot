@@ -61,9 +61,9 @@ def register_handlers(bot):
                 if banner_url:
                     local_path = get_local_image_path(banner_url)
                     if local_path:
-                    try:
-                        with open(local_path, "rb") as photo:
-                            bot.send_photo(user_id, photo, caption=caption, reply_markup=kb, parse_mode='HTML')
+                        try:
+                            with open(local_path, "rb") as photo:
+                                bot.send_photo(user_id, photo, caption=caption, reply_markup=kb, parse_mode='HTML')
                         except Exception as e:
                             log_warning("catalog_handlers", f"send_photo local catalog banner failed: {e}")
                             bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb, parse_mode='HTML')
