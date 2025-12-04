@@ -4,27 +4,24 @@ This guide explains how to format text in your Google Sheets to display **bold t
 
 ## Supported Formatting
 
-The bot supports the following formatting options:
+The bot supports HTML formatting directly. Use HTML tags and `\n` for newlines.
 
 ### 1. **Bold Text**
-To make text bold, wrap it with double asterisks: `**text**`
+To make text bold, use HTML `<b>` tags: `<b>text</b>`
 
 **Examples:**
-- `**Название курса**` → **Название курса** (bold)
-- `**Цена:** 1000 руб.` → **Цена:** 1000 руб.
-- `Это **важный** текст` → Это **важный** текст
+- `<b>Название курса</b>` → **Название курса** (bold)
+- `<b>Цена:</b> 1000 руб.` → **Цена:** 1000 руб.
+- `Это <b>важный</b> текст` → Это **важный** текст
 
 ### 2. **New Lines and Paragraphs**
-To create a new line, simply press `Enter` in the cell. The bot will preserve all line breaks.
+To create a new line, type `\n` (backslash followed by n) in your cell. The bot will convert `\n` to actual line breaks.
+
+**Important:** Since pressing Enter in Google Sheets moves to the next cell, use `\n` for line breaks instead.
 
 **Examples:**
 ```
-**Название курса**
-
-Описание курса на первой строке.
-Описание на второй строке.
-
-Дополнительная информация.
+<b>Название курса</b>\n\nОписание курса на первой строке.\nОписание на второй строке.\n\nДополнительная информация.
 ```
 
 This will display as:
@@ -40,19 +37,13 @@ This will display as:
 In your **Courses** sheet (the sheet with course data), you can format:
 
 1. **`name` column** - Course name
-   - Example: `**Базовый курс макияжа**`
-   - Example with newlines: `**Базовый курс макияжа**\nПодзаголовок`
+   - Example: `<b>Базовый курс макияжа</b>`
+   - Example with newlines: `<b>Базовый курс макияжа</b>\nПодзаголовок`
 
 2. **`description` column** - Course description
    - Example:
      ```
-     **Что вы узнаете:**
-     
-     • Основы макияжа
-     • Работа с кистями
-     • Техники нанесения
-     
-     **Длительность:** 10 уроков
+     <b>Что вы узнаете:</b>\n\n• Основы макияжа\n• Работа с кистями\n• Техники нанесения\n\n<b>Длительность:</b> 10 уроков
      ```
 
 ### Texts Sheet
@@ -61,9 +52,7 @@ In your **Texts** sheet (the sheet with bot messages), you can format:
 1. **`catalog_text`** - Text displayed in the catalog
    - Example:
      ```
-     **Добро пожаловать в каталог!**
-     
-     Выберите интересующий вас курс из списка ниже.
+     <b>Добро пожаловать в каталог!</b>\n\nВыберите интересующий вас курс из списка ниже.
      ```
 
 ## How to Format in Google Sheets
@@ -73,36 +62,37 @@ Simply type the formatting directly in the cell:
 
 1. Open your Google Sheet
 2. Click on the cell you want to edit
-3. Type your text with `**` for bold sections
-4. Press `Enter` to create new lines within the same cell
+3. Type your text with HTML tags like `<b>` for bold sections
+4. Type `\n` (backslash followed by n) for new lines
 5. The formatting will be preserved when the bot reads the data
 
 **Example cell content:**
 ```
-**Курс по макияжу**
-
-Подробное описание курса.
-Вторая строка описания.
-
-**Преимущества:**
-• Пункт 1
-• Пункт 2
+<b>Курс по макияжу</b>\n\nПодробное описание курса.\nВторая строка описания.\n\n<b>Преимущества:</b>\n• Пункт 1\n• Пункт 2
 ```
 
-### Method 2: Using CHAR(10) for Line Breaks
+### Method 2: Using CHAR(10) in Formulas
 If you need to use formulas, you can use `CHAR(10)` for line breaks:
 
 ```
-="**Название**" & CHAR(10) & "Описание" & CHAR(10) & CHAR(10) & "Дополнительно"
+="<b>Название</b>" & CHAR(10) & "Описание" & CHAR(10) & CHAR(10) & "Дополнительно"
 ```
+
+**Note:** When using formulas, `CHAR(10)` will be converted to `\n` automatically, which the bot will then convert to actual newlines.
 
 ## Important Notes
 
-1. **Double Asterisks Only**: Use `**text**` for bold. Single asterisks `*text*` will also work, but `**text**` is recommended.
+1. **HTML Tags**: Use HTML tags directly:
+   - `<b>text</b>` for **bold**
+   - `<i>text</i>` for *italic*
+   - `<u>text</u>` for <u>underline</u>
+   - `<s>text</s>` for ~~strikethrough~~
+   - `<code>text</code>` for `code`
+   - `<pre>text</pre>` for preformatted text
 
-2. **Line Breaks**: Simply press `Enter` in the cell to create new lines. Google Sheets will preserve them. The bot now properly reads newlines from both CSV export and Google Sheets API.
+2. **Line Breaks**: Type `\n` (backslash followed by n) for new lines. Since pressing Enter in Google Sheets moves to the next cell, use `\n` instead. The bot will convert `\n` to actual line breaks.
 
-3. **No HTML Tags**: Don't use HTML tags like `<b>`, `<br>`, etc. Use the markdown-style formatting instead.
+3. **Multiple Newlines**: Use `\n\n` for paragraph breaks (empty lines between paragraphs).
 
 4. **Special Characters**: The following characters will be automatically escaped:
    - `<` → `&lt;`
@@ -116,7 +106,7 @@ If you need to use formulas, you can use `CHAR(10)` for line breaks:
 ### Example 1: Course Name with Bold
 **Cell content:**
 ```
-**Профессиональный курс макияжа**
+<b>Профессиональный курс макияжа</b>
 ```
 
 **Result in bot:**
@@ -125,16 +115,7 @@ If you need to use formulas, you can use `CHAR(10)` for line breaks:
 ### Example 2: Course Description with Formatting
 **Cell content:**
 ```
-**Описание курса:**
-
-Этот курс научит вас основам профессионального макияжа.
-
-**Что включено:**
-• 15 видеоуроков
-• Практические задания
-• Обратная связь от преподавателя
-
-**Длительность:** 30 дней
+<b>Описание курса:</b>\n\nЭтот курс научит вас основам профессионального макияжа.\n\n<b>Что включено:</b>\n• 15 видеоуроков\n• Практические задания\n• Обратная связь от преподавателя\n\n<b>Длительность:</b> 30 дней
 ```
 
 **Result in bot:**
@@ -150,10 +131,7 @@ If you need to use formulas, you can use `CHAR(10)` for line breaks:
 ### Example 3: Catalog Text
 **Cell content (in Texts sheet, `catalog_text` key):**
 ```
-**Каталог курсов**
-
-Выберите интересующий вас курс из списка ниже.
-Все курсы доступны для покупки.
+<b>Каталог курсов</b>\n\nВыберите интересующий вас курс из списка ниже.\nВсе курсы доступны для покупки.
 ```
 
 **Result in bot:**
@@ -164,13 +142,14 @@ If you need to use formulas, you can use `CHAR(10)` for line breaks:
 ## Troubleshooting
 
 **Problem**: Bold text not showing
-- **Solution**: Make sure you're using `**text**` (double asterisks), not single asterisks or HTML tags
+- **Solution**: Make sure you're using HTML tags like `<b>text</b>`, not markdown `**text**`
 
 **Problem**: Line breaks not working
 - **Solution**: 
-  1. Make sure you're pressing `Enter` within the cell (not just moving to the next cell). In Google Sheets, you can press `Ctrl+Enter` (Windows) or `Cmd+Enter` (Mac) to add a line break without leaving the cell.
-  2. If using CSV export mode, ensure your cells with newlines are properly formatted. The bot now correctly handles newlines in CSV format.
-  3. Try refreshing the bot's cache or restarting the bot to pick up changes.
+  1. Make sure you're typing `\n` (backslash followed by n) literally in the cell, not pressing Enter
+  2. For paragraph breaks, use `\n\n` (two newlines)
+  3. If using formulas with `CHAR(10)`, that will work too
+  4. Try refreshing the bot's cache or restarting the bot to pick up changes
 
 **Problem**: Formatting looks wrong
 - **Solution**: Check that you don't have unmatched asterisks or special characters that might interfere with parsing
@@ -178,7 +157,8 @@ If you need to use formulas, you can use `CHAR(10)` for line breaks:
 ## Need Help?
 
 If you encounter any issues with text formatting, check:
-1. That you're using `**` for bold (not `*` or HTML)
-2. That line breaks are actual line breaks in the cell (not spaces)
-3. That the bot has refreshed its cache (try restarting the bot or waiting a few minutes)
+1. That you're using HTML tags like `<b>text</b>` for bold (not markdown `**text**`)
+2. That you're typing `\n` literally for line breaks (backslash followed by n)
+3. That HTML tags are properly closed (e.g., `<b>text</b>`, not `<b>text`)
+4. That the bot has refreshed its cache (try restarting the bot or waiting a few minutes)
 

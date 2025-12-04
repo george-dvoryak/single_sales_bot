@@ -36,13 +36,13 @@ def format_for_telegram_html(text: str) -> str:
     """
     Format text for Telegram HTML parse mode.
     
-    Converts markdown-style formatting to Telegram HTML:
-    - **text** -> <b>text</b> (bold)
-    - Preserves newlines (\n) - they work naturally in Telegram
-    - Escapes HTML entities (<, >, &) that aren't part of HTML tags
+    Supports HTML formatting directly:
+    - HTML tags like <b>, <i>, <u>, <s>, <code>, <pre> are preserved
+    - Converts literal \n to actual newlines
+    - Escapes HTML entities (<, >, &) that aren't part of valid HTML tags
     
     Args:
-        text: Input text that may contain markdown-style formatting
+        text: Input text that may contain HTML tags and \n for newlines
         
     Returns:
         Text formatted for Telegram HTML parse mode
@@ -52,22 +52,23 @@ def format_for_telegram_html(text: str) -> str:
     
     text = str(text)
     
-    # First, convert markdown bold **text** to <b>text</b>
-    # Use non-greedy matching to handle multiple bold sections
-    text = re.sub(r'\*\*([^*]+?)\*\*', r'<b>\1</b>', text)
+    # Convert literal \n to actual newlines
+    text = text.replace('\\n', '\n')
     
-    # Escape HTML entities: &, <, > (but preserve existing HTML tags)
-    # Strategy: temporarily replace HTML tags, escape, then restore
+    # Escape HTML entities: &, <, > (but preserve existing valid HTML tags)
+    # Strategy: temporarily replace valid HTML tags, escape, then restore
     html_tags = []
-    tag_pattern = r'<[^>]+>'
+    # Pattern for valid Telegram HTML tags: <tag>, </tag>, or <tag attr="value">
+    # Telegram supports: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="...">
+    tag_pattern = r'</?(?:b|i|u|s|code|pre|a(?:\s+[^>]*)?)>'
     
     def replace_tag(match):
         placeholder = f"__HTML_TAG_{len(html_tags)}__"
         html_tags.append(match.group())
         return placeholder
     
-    # Replace HTML tags with placeholders
-    text_with_placeholders = re.sub(tag_pattern, replace_tag, text)
+    # Replace valid HTML tags with placeholders
+    text_with_placeholders = re.sub(tag_pattern, replace_tag, text, flags=re.IGNORECASE)
     
     # Escape entities in the text (excluding placeholders)
     text_with_placeholders = text_with_placeholders.replace('&', '&amp;')
