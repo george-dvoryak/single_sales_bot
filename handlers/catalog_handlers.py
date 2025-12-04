@@ -9,6 +9,7 @@ from utils.text_utils import strip_html, format_for_telegram_html
 from utils.images import get_local_image_path
 from utils.text_loader import get_text, get_texts
 from utils.logger import log_error, log_warning, log_info
+from utils.channel import get_channel_link
 
 CATALOG_TITLE = get_text("catalog_title", "Каталог курсов:")
 ALREADY_PURCHASED_MSG = get_text("already_purchased_message", "У вас уже есть доступ к этому курсу.")
@@ -129,18 +130,9 @@ def register_handlers(bot):
             text = f"{formatted_name}\n{clean_desc}\n\n✅ {ALREADY_PURCHASED_MSG}"
             ikb = types.InlineKeyboardMarkup()
             if channel_id:
-                if str(channel_id).startswith("@"):
-                    url = f"https://t.me/{channel_id[1:]}"
-                    ikb.add(types.InlineKeyboardButton("Открыть канал курса", url=url))
-                else:
-                    invite_link = None
-                    try:
-                        invite = bot.create_chat_invite_link(chat_id=channel_id, member_limit=1, expire_date=None)
-                        invite_link = invite.invite_link
-                    except Exception as e:
-                        log_error("catalog_handlers", f"Invite link error: {e}")
-                    if invite_link:
-                        ikb.add(types.InlineKeyboardButton("Перейти в канал курса", url=invite_link))
+                channel_link = get_channel_link(bot, channel_id)
+                if channel_link:
+                    ikb.add(types.InlineKeyboardButton("Перейти в канал курса", url=channel_link))
             ikb.add(types.InlineKeyboardButton("⬅️ Назад к каталогу", callback_data="back_to_catalog"))
             try:
                 if c.message.content_type == "photo":

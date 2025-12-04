@@ -7,7 +7,7 @@ import datetime
 from telebot import types
 from db import get_all_active_subscriptions, get_expired_subscriptions, mark_subscription_expired, get_connection
 from utils.text_utils import strip_html
-from utils.channel import remove_user_from_channel, check_course_channels
+from utils.channel import remove_user_from_channel, check_course_channels, get_channel_link
 from google_sheets import get_courses_data
 from utils.logger import log_error, log_warning, log_info
 from config import ADMIN_IDS, DATABASE_PATH, GSHEET_ID
@@ -42,6 +42,9 @@ def register_handlers(bot):
             
             text = f"📊 Все активные подписки ({len(all_subs)} всего):\n\n"
             
+            # Collect channel links for inline keyboard
+            channel_buttons = []
+            
             for uid, subs in sorted(user_subs.items()):
                 text += f"👤 ID {uid}:\n"
                 
@@ -49,10 +52,29 @@ def register_handlers(bot):
                     course_name = s["course_name"]
                     clean_course_name = strip_html(course_name) if course_name else "Курс"
                     expiry_ts = s["expiry"]
+                    channel_id = s["channel_id"]
                     dt = datetime.datetime.fromtimestamp(expiry_ts)
                     dstr = dt.strftime("%Y-%m-%d %H:%M")
-                    text += f"  • {clean_course_name} (до {dstr})\n"
+                    text += f"  • {clean_course_name} (до {dstr})"
+                    
+                    # Add channel link if available
+                    if channel_id:
+                        channel_link = get_channel_link(bot, channel_id)
+                        if channel_link:
+                            # Store button info for keyboard
+                            button_text = f"{clean_course_name} (ID {uid})"
+                            if len(button_text) > 64:
+                                button_text = f"Курс ID {uid}"
+                            channel_buttons.append((button_text, channel_link))
+                    text += "\n"
                 text += "\n"
+            
+            # Create keyboard with channel links if any
+            keyboard = None
+            if channel_buttons:
+                keyboard = types.InlineKeyboardMarkup()
+                for button_text, channel_link in channel_buttons:
+                    keyboard.add(types.InlineKeyboardButton(button_text, url=channel_link))
             
             # Split message if too long (Telegram limit is 4096 chars)
             if len(text) > 4000:
@@ -60,14 +82,15 @@ def register_handlers(bot):
                 current_msg = ""
                 for part in parts:
                     if len(current_msg) + len(part) + 2 > 4000:
-                        bot.send_message(user_id, current_msg, disable_web_page_preview=True)
+                        bot.send_message(user_id, current_msg, reply_markup=keyboard, disable_web_page_preview=True)
+                        keyboard = None  # Only add keyboard to first message
                         current_msg = part + "\n\n"
                     else:
                         current_msg += part + "\n\n"
                 if current_msg.strip():
-                    bot.send_message(user_id, current_msg, disable_web_page_preview=True)
+                    bot.send_message(user_id, current_msg, reply_markup=keyboard, disable_web_page_preview=True)
             else:
-                bot.send_message(user_id, text, disable_web_page_preview=True)
+                bot.send_message(user_id, text, reply_markup=keyboard, disable_web_page_preview=True)
                 
         except Exception as e:
             log_error("admin_handlers", f"Error in handle_admin_all_subscriptions: {e}")

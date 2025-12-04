@@ -9,6 +9,7 @@ from utils.text_utils import strip_html, format_for_telegram_html
 from utils.images import get_local_image_path
 from utils.text_loader import get_text
 from utils.logger import log_error, log_warning, log_info
+from utils.channel import get_channel_link
 
 WELCOME_MSG = get_text("welcome_message", "Здравствуйте! Этот бот поможет вам купить курсы по макияжу.\nНиже находится меню.")
 SUPPORT_MSG = get_text("support_message", "Если у вас есть вопросы, напишите нам в поддержку.")
@@ -56,7 +57,10 @@ def register_handlers(bot):
         if not subs:
             bot.send_message(user_id, "У вас нет активных подписок.")
             return
-        text = "Ваши активные подписки:\n"
+        
+        text = "Ваши активные подписки:\n\n"
+        keyboard = types.InlineKeyboardMarkup()
+        
         for s in subs:
             course_name = s["course_name"]
             clean_course_name = strip_html(course_name) if course_name else "Курс"
@@ -64,12 +68,19 @@ def register_handlers(bot):
             expiry_ts = s["expiry"]
             dt = datetime.datetime.fromtimestamp(expiry_ts)
             dstr = dt.strftime("%Y-%m-%d")
-            text += f"• {clean_course_name} (доступ до {dstr}) – "
-            if str(channel_id).startswith("@"):
-                text += f"{channel_id}\n"
-            else:
-                text += "ссылка недоступна\n"
-        bot.send_message(user_id, text, disable_web_page_preview=True)
+            text += f"• {clean_course_name} (доступ до {dstr})\n"
+            
+            # Add channel link button if available
+            if channel_id:
+                channel_link = get_channel_link(bot, channel_id)
+                if channel_link:
+                    button_text = f"Перейти в канал: {clean_course_name}"
+                    # Limit button text length (Telegram limit is 64 chars)
+                    if len(button_text) > 64:
+                        button_text = f"Перейти в канал курса"
+                    keyboard.add(types.InlineKeyboardButton(button_text, url=channel_link))
+        
+        bot.send_message(user_id, text, reply_markup=keyboard, disable_web_page_preview=True)
 
     @bot.message_handler(func=lambda m: m.text == "Поддержка")
     def handle_support(message: types.Message):

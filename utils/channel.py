@@ -2,7 +2,39 @@
 """Channel management utilities."""
 
 import datetime
+from typing import Optional
 from utils.logger import log_info, log_error, log_warning
+
+
+def get_channel_link(bot, channel_id: str) -> Optional[str]:
+    """
+    Get a clickable link to a channel.
+    
+    Args:
+        bot: Telegram bot instance
+        channel_id: Channel ID (numeric) or username (starting with @)
+        
+    Returns:
+        URL string if successful, None otherwise
+    """
+    if not channel_id:
+        return None
+    
+    # Public channel (username starting with @)
+    if str(channel_id).startswith("@"):
+        return f"https://t.me/{channel_id[1:]}"
+    
+    # Private channel (numeric ID) - create invite link
+    try:
+        invite = bot.create_chat_invite_link(
+            chat_id=channel_id,
+            member_limit=1,
+            expire_date=None
+        )
+        return invite.invite_link
+    except Exception as e:
+        log_error("channel", f"Failed to create invite link for channel {channel_id}: {e}")
+        return None
 
 
 def remove_user_from_channel(bot, user_id: int, channel_id: str) -> bool:
