@@ -9,7 +9,6 @@ from utils.text_utils import strip_html, format_for_telegram_html
 from utils.images import get_local_image_path
 from utils.text_loader import get_text
 from utils.logger import log_error, log_warning, log_info
-from utils.channel import get_channel_link
 
 WELCOME_MSG = get_text("welcome_message", "Здравствуйте! Этот бот поможет вам купить курсы по макияжу.\nНиже находится меню.")
 SUPPORT_MSG = get_text("support_message", "Если у вас есть вопросы, напишите нам в поддержку.")
@@ -63,18 +62,10 @@ def register_handlers(bot):
         for s in subs:
             course_name = s["course_name"]
             clean_course_name = strip_html(course_name) if course_name else "Курс"
-            channel_id = s["channel_id"]
             expiry_ts = s["expiry"]
             dt = datetime.datetime.fromtimestamp(expiry_ts)
             dstr = dt.strftime("%Y-%m-%d")
-            text += f"• {clean_course_name} (доступ до {dstr})"
-            
-            # Add channel link as text if available
-            if channel_id:
-                channel_link = get_channel_link(bot, channel_id)
-                if channel_link:
-                    text += f"\n  {channel_link}"
-            text += "\n"
+            text += f"• {clean_course_name}\n  Доступ до {dstr}\n\n"
         
         bot.send_message(user_id, text, disable_web_page_preview=True)
 

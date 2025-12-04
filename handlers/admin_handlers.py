@@ -7,7 +7,7 @@ import datetime
 from telebot import types
 from db import get_all_active_subscriptions, get_expired_subscriptions, mark_subscription_expired, get_connection
 from utils.text_utils import strip_html
-from utils.channel import remove_user_from_channel, check_course_channels, get_channel_link
+from utils.channel import remove_user_from_channel, check_course_channels
 from google_sheets import get_courses_data
 from utils.logger import log_error, log_warning, log_info
 from config import ADMIN_IDS, DATABASE_PATH, GSHEET_ID
@@ -49,17 +49,9 @@ def register_handlers(bot):
                     course_name = s["course_name"]
                     clean_course_name = strip_html(course_name) if course_name else "Курс"
                     expiry_ts = s["expiry"]
-                    channel_id = s["channel_id"]
                     dt = datetime.datetime.fromtimestamp(expiry_ts)
                     dstr = dt.strftime("%Y-%m-%d %H:%M")
-                    text += f"  • {clean_course_name} (до {dstr})"
-                    
-                    # Add channel link as text if available
-                    if channel_id:
-                        channel_link = get_channel_link(bot, channel_id)
-                        if channel_link:
-                            text += f"\n    {channel_link}"
-                    text += "\n"
+                    text += f"  • {clean_course_name}\n    Доступ до {dstr}\n"
                 text += "\n"
             
             # Split message if too long (Telegram limit is 4096 chars)
