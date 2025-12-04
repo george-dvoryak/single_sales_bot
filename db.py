@@ -420,12 +420,36 @@ def set_user_email(user_id: int, email: str) -> bool:
     conn = get_connection()
     cur = conn.cursor()
     try:
+        # Ensure user exists in users table (required for foreign key constraint)
+        # Use the same pattern as add_user function
+        try:
+            cur.execute("INSERT INTO users (user_id, username) VALUES (?, ?);", (user_id, None))
+        except sqlite3.IntegrityError:
+            # User already exists, that's fine
+            pass
+        
+        # Insert or update email using INSERT OR REPLACE (SQLite compatible)
         cur.execute(
-            "INSERT INTO user_email (tg_id, email) VALUES (?, ?) ON CONFLICT(tg_id) DO UPDATE SET email = ?;",
-            (user_id, email, email)
+            "INSERT OR REPLACE INTO user_email (tg_id, email) VALUES (?, ?);",
+            (user_id, email)
         )
         conn.commit()
         return True
+    except sqlite3.IntegrityError as e:
+        # Foreign key constraint violation - user doesn't exist and insert failed
+        log_error("db", f"Foreign key constraint violation setting user email for user {user_id}: {e}")
+        # Try to add user explicitly and retry
+        try:
+            add_user(user_id, None)
+            cur.execute(
+                "INSERT OR REPLACE INTO user_email (tg_id, email) VALUES (?, ?);",
+                (user_id, email)
+            )
+            conn.commit()
+            return True
+        except Exception as retry_e:
+            log_error("db", f"Error retrying set_user_email after adding user: {retry_e}", exc_info=True)
+            return False
     except Exception as e:
-        log_error("db", f"Error setting user email: {e}")
+        log_error("db", f"Error setting user email: {e}", exc_info=True)
         return False
