@@ -59,7 +59,6 @@ def register_handlers(bot):
             return
         
         text = "Ваши активные подписки:\n\n"
-        keyboard = types.InlineKeyboardMarkup()
         
         for s in subs:
             course_name = s["course_name"]
@@ -68,19 +67,16 @@ def register_handlers(bot):
             expiry_ts = s["expiry"]
             dt = datetime.datetime.fromtimestamp(expiry_ts)
             dstr = dt.strftime("%Y-%m-%d")
-            text += f"• {clean_course_name} (доступ до {dstr})\n"
+            text += f"• {clean_course_name} (доступ до {dstr})"
             
-            # Add channel link button if available
+            # Add channel link as text if available
             if channel_id:
                 channel_link = get_channel_link(bot, channel_id)
                 if channel_link:
-                    button_text = f"Перейти в канал: {clean_course_name}"
-                    # Limit button text length (Telegram limit is 64 chars)
-                    if len(button_text) > 64:
-                        button_text = f"Перейти в канал курса"
-                    keyboard.add(types.InlineKeyboardButton(button_text, url=channel_link))
+                    text += f"\n  {channel_link}"
+            text += "\n"
         
-        bot.send_message(user_id, text, reply_markup=keyboard, disable_web_page_preview=True)
+        bot.send_message(user_id, text, disable_web_page_preview=True)
 
     @bot.message_handler(func=lambda m: m.text == "Поддержка")
     def handle_support(message: types.Message):

@@ -42,9 +42,6 @@ def register_handlers(bot):
             
             text = f"📊 Все активные подписки ({len(all_subs)} всего):\n\n"
             
-            # Collect channel links for inline keyboard
-            channel_buttons = []
-            
             for uid, subs in sorted(user_subs.items()):
                 text += f"👤 ID {uid}:\n"
                 
@@ -57,24 +54,13 @@ def register_handlers(bot):
                     dstr = dt.strftime("%Y-%m-%d %H:%M")
                     text += f"  • {clean_course_name} (до {dstr})"
                     
-                    # Add channel link if available
+                    # Add channel link as text if available
                     if channel_id:
                         channel_link = get_channel_link(bot, channel_id)
                         if channel_link:
-                            # Store button info for keyboard
-                            button_text = f"{clean_course_name} (ID {uid})"
-                            if len(button_text) > 64:
-                                button_text = f"Курс ID {uid}"
-                            channel_buttons.append((button_text, channel_link))
+                            text += f"\n    {channel_link}"
                     text += "\n"
                 text += "\n"
-            
-            # Create keyboard with channel links if any
-            keyboard = None
-            if channel_buttons:
-                keyboard = types.InlineKeyboardMarkup()
-                for button_text, channel_link in channel_buttons:
-                    keyboard.add(types.InlineKeyboardButton(button_text, url=channel_link))
             
             # Split message if too long (Telegram limit is 4096 chars)
             if len(text) > 4000:
@@ -82,15 +68,14 @@ def register_handlers(bot):
                 current_msg = ""
                 for part in parts:
                     if len(current_msg) + len(part) + 2 > 4000:
-                        bot.send_message(user_id, current_msg, reply_markup=keyboard, disable_web_page_preview=True)
-                        keyboard = None  # Only add keyboard to first message
+                        bot.send_message(user_id, current_msg, disable_web_page_preview=True)
                         current_msg = part + "\n\n"
                     else:
                         current_msg += part + "\n\n"
                 if current_msg.strip():
-                    bot.send_message(user_id, current_msg, reply_markup=keyboard, disable_web_page_preview=True)
+                    bot.send_message(user_id, current_msg, disable_web_page_preview=True)
             else:
-                bot.send_message(user_id, text, reply_markup=keyboard, disable_web_page_preview=True)
+                bot.send_message(user_id, text, disable_web_page_preview=True)
                 
         except Exception as e:
             log_error("admin_handlers", f"Error in handle_admin_all_subscriptions: {e}")
