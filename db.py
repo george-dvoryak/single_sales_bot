@@ -56,27 +56,11 @@ def init_db(conn):
             customer_email TEXT,
             payment_url TEXT,
             payment_status TEXT,
-            course_message_id INTEGER,
-            payment_message_id INTEGER,
-            chat_id INTEGER,
             created_at INTEGER,
             updated_at INTEGER
         )
         """
     )
-    # Add new columns if they don't exist (for existing databases)
-    try:
-        cur.execute("ALTER TABLE prodamus_payments ADD COLUMN course_message_id INTEGER")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-    try:
-        cur.execute("ALTER TABLE prodamus_payments ADD COLUMN payment_message_id INTEGER")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-    try:
-        cur.execute("ALTER TABLE prodamus_payments ADD COLUMN chat_id INTEGER")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
     conn.commit()
 
 
@@ -232,8 +216,7 @@ def get_all_active_subscriptions():
 
 
 # Prodamus payment tracking functions
-def create_prodamus_payment(order_id: str, user_id: int, course_id: str, customer_email: str, 
-                            course_message_id: int = None, chat_id: int = None):
+def create_prodamus_payment(order_id: str, user_id: int, course_id: str, customer_email: str):
     """
     Create a new Prodamus payment record.
     
@@ -242,8 +225,6 @@ def create_prodamus_payment(order_id: str, user_id: int, course_id: str, custome
         user_id: Telegram user ID
         course_id: Course ID
         customer_email: Customer email address
-        course_message_id: Message ID of the course details message (optional)
-        chat_id: Chat ID where the messages are located (optional)
         
     Returns:
         bool: True if created successfully, False if duplicate or error
@@ -254,11 +235,10 @@ def create_prodamus_payment(order_id: str, user_id: int, course_id: str, custome
     try:
         cur.execute(
             """
-            INSERT INTO prodamus_payments (order_id, user_id, course_id, customer_email, payment_status, 
-                                          course_message_id, chat_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?);
+            INSERT INTO prodamus_payments (order_id, user_id, course_id, customer_email, payment_status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?);
             """,
-            (order_id, user_id, course_id, customer_email, course_message_id, chat_id, now, now)
+            (order_id, user_id, course_id, customer_email, now, now)
         )
         conn.commit()
         return True
@@ -276,36 +256,25 @@ def create_prodamus_payment(order_id: str, user_id: int, course_id: str, custome
         return False
 
 
-def update_prodamus_payment_url(order_id: str, payment_url: str, payment_message_id: int = None):
+def update_prodamus_payment_url(order_id: str, payment_url: str):
     """
     Update payment URL for a Prodamus payment.
     
     Args:
         order_id: Order ID
         payment_url: Payment URL from Prodamus
-        payment_message_id: Message ID of the payment link message (optional)
     """
     conn = get_connection()
     cur = conn.cursor()
     now = int(time.time())
-    if payment_message_id is not None:
-        cur.execute(
-            """
-            UPDATE prodamus_payments 
-            SET payment_url = ?, payment_message_id = ?, updated_at = ?
-            WHERE order_id = ?;
-            """,
-            (payment_url, payment_message_id, now, order_id)
-        )
-    else:
-        cur.execute(
-            """
-            UPDATE prodamus_payments 
-            SET payment_url = ?, updated_at = ?
-            WHERE order_id = ?;
-            """,
-            (payment_url, now, order_id)
-        )
+    cur.execute(
+        """
+        UPDATE prodamus_payments 
+        SET payment_url = ?, updated_at = ?
+        WHERE order_id = ?;
+        """,
+        (payment_url, now, order_id)
+    )
     conn.commit()
 
 

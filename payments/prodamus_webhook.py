@@ -188,9 +188,6 @@ def handle_successful_payment(bot, payload: dict) -> None:
     
     user_id = payment["user_id"]
     course_id = payment["course_id"]
-    course_message_id = payment.get("course_message_id")
-    payment_message_id = payment.get("payment_message_id")
-    chat_id = payment.get("chat_id")
     
     # Get course data
     try:
@@ -217,22 +214,6 @@ def handle_successful_payment(bot, payload: dict) -> None:
     except (ValueError, TypeError):
         amount_float = 0.0
     
-    # Delete payment link message if we have the message ID
-    if payment_message_id and chat_id:
-        try:
-            bot.delete_message(chat_id=chat_id, message_id=payment_message_id)
-            log_info("prodamus_webhook", f"Deleted payment link message {payment_message_id} for user {user_id}")
-        except Exception as e:
-            log_warning("prodamus_webhook", f"Could not delete payment message {payment_message_id}: {e}")
-    
-    # Delete course details message if we have the message ID
-    if course_message_id and chat_id:
-        try:
-            bot.delete_message(chat_id=chat_id, message_id=course_message_id)
-            log_info("prodamus_webhook", f"Deleted course details message {course_message_id} for user {user_id}")
-        except Exception as e:
-            log_warning("prodamus_webhook", f"Could not delete course message {course_message_id}: {e}")
-    
     # Grant access and send invite
     payment_handlers.grant_access_and_send_invite(
         bot=bot,
@@ -248,48 +229,6 @@ def handle_successful_payment(bot, payload: dict) -> None:
         purchase_receipt_msg="Чек об оплате будет отправлен на ваш email в системе Prodamus.",
         admin_prefix="Оплата (Prodamus)",
     )
-    
-    # Send catalog message after successful payment
-    try:
-        from handlers.catalog_handlers import register_handlers
-        # We need to call the send_catalog_message function, but it's inside register_handlers
-        # Let's import it directly from the module
-        from handlers import catalog_handlers
-        # The send_catalog_message is a local function, so we'll need to call it differently
-        # Actually, we can just send the catalog directly using the same logic
-        try:
-            courses = get_courses_data()
-        except Exception:
-            courses = []
-        
-        if courses:
-            from utils.keyboards import create_catalog_keyboard
-            from utils.text_loader import get_texts
-            from utils.images import get_local_image_path
-            
-            kb = create_catalog_keyboard(courses)
-            texts = get_texts()
-            banner_url = texts.get("catalog_image_url")
-            caption = texts.get("catalog_text", "Каталог курсов:")
-            
-            try:
-                if banner_url:
-                    local_path = get_local_image_path(banner_url)
-                    if local_path:
-                        try:
-                            with open(local_path, "rb") as photo:
-                                bot.send_photo(user_id, photo, caption=caption, reply_markup=kb)
-                        except Exception:
-                            bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
-                    else:
-                        bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
-                else:
-                    bot.send_message(user_id, caption, reply_markup=kb)
-                log_info("prodamus_webhook", f"Sent catalog message to user {user_id} after successful payment")
-            except Exception as e:
-                log_warning("prodamus_webhook", f"Could not send catalog message: {e}")
-    except Exception as e:
-        log_warning("prodamus_webhook", f"Error sending catalog after payment: {e}")
     
     log_info("prodamus_webhook",
              f"Payment processed: user_id={user_id}, email={customer_email}, "
