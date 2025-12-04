@@ -2,6 +2,7 @@
 """Google Sheets integration for courses and texts data."""
 
 import csv
+import io
 import requests
 
 from config import GSHEET_ID, GSHEET_COURSES_NAME, GSHEET_TEXTS_NAME, GOOGLE_SHEETS_USE_API, GOOGLE_CREDENTIALS_FILE
@@ -22,7 +23,9 @@ def fetch_sheet_csv(sheet_name: str):
     resp = requests.get(url, timeout=15)
     resp.raise_for_status()
     content = resp.content.decode('utf-8')
-    data = list(csv.reader(content.splitlines()))
+    # Use StringIO to properly handle newlines within CSV cells
+    # This preserves newlines that are inside quoted fields
+    data = list(csv.reader(io.StringIO(content)))
     return data
 
 def get_courses_data():

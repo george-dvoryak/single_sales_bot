@@ -100,7 +100,7 @@ If you need to use formulas, you can use `CHAR(10)` for line breaks:
 
 1. **Double Asterisks Only**: Use `**text**` for bold. Single asterisks `*text*` will also work, but `**text**` is recommended.
 
-2. **Line Breaks**: Simply press `Enter` in the cell to create new lines. Google Sheets will preserve them.
+2. **Line Breaks**: Simply press `Enter` in the cell to create new lines. Google Sheets will preserve them. The bot now properly reads newlines from both CSV export and Google Sheets API.
 
 3. **No HTML Tags**: Don't use HTML tags like `<b>`, `<br>`, etc. Use the markdown-style formatting instead.
 
@@ -167,7 +167,10 @@ If you need to use formulas, you can use `CHAR(10)` for line breaks:
 - **Solution**: Make sure you're using `**text**` (double asterisks), not single asterisks or HTML tags
 
 **Problem**: Line breaks not working
-- **Solution**: Make sure you're pressing `Enter` within the cell (not just moving to the next cell). In Google Sheets, you can press `Ctrl+Enter` (Windows) or `Cmd+Enter` (Mac) to add a line break without leaving the cell.
+- **Solution**: 
+  1. Make sure you're pressing `Enter` within the cell (not just moving to the next cell). In Google Sheets, you can press `Ctrl+Enter` (Windows) or `Cmd+Enter` (Mac) to add a line break without leaving the cell.
+  2. If using CSV export mode, ensure your cells with newlines are properly formatted. The bot now correctly handles newlines in CSV format.
+  3. Try refreshing the bot's cache or restarting the bot to pick up changes.
 
 **Problem**: Formatting looks wrong
 - **Solution**: Check that you don't have unmatched asterisks or special characters that might interfere with parsing
