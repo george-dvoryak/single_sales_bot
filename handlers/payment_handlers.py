@@ -263,12 +263,17 @@ def register_handlers(bot):
             payment_url = existing_payment["payment_url"]
             log_info("payment_handlers", f"Reusing existing payment for user {user_id}, course {course_id}, order_id={order_id}")
         else:
-            # Create new payment record
-            order_num = generate_order_num(user_id, course_id)
-            order_id = order_num
+            # Ensure user exists in database (required for foreign key constraint)
+            from db import add_user
+            add_user(user_id, None)
             
+            # Create new payment record
             payment_created = False
             for attempt in range(3):
+                # Generate new order_id for each attempt (with new timestamp)
+                order_num = generate_order_num(user_id, course_id)
+                order_id = order_num
+                
                 log_info(
                     "payment_handlers",
                     f"Creating Prodamus payment: user_id={user_id}, course_id={course_id}, "
@@ -278,11 +283,8 @@ def register_handlers(bot):
                     payment_created = True
                     break
                 if attempt < 2:
-                    # Generate new order_id for retry (with new timestamp)
-                    order_num = generate_order_num(user_id, course_id)
-                    order_id = order_num
                     time.sleep(0.3)
-                    log_info("payment_handlers", f"Retrying payment creation for user {user_id}, attempt {attempt + 2}, order_id={order_id}")
+                    log_info("payment_handlers", f"Retrying payment creation for user {user_id}, attempt {attempt + 2}")
             
             if not payment_created:
                 log_error(
@@ -298,7 +300,10 @@ def register_handlers(bot):
         try:
             # Get username from database
             user_info = get_user(user_id)
-            username = user_info.get("username", "user") if user_info else "user"
+            if user_info and "username" in user_info.keys() and user_info["username"]:
+                username = user_info["username"]
+            else:
+                username = "user"
             clean_course_name = strip_html(course_name)
             
             # If we don't have a payment URL yet, create it
