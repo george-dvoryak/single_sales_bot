@@ -7,11 +7,10 @@ from telebot import types
 from google_sheets import get_courses_data
 from db import (
     has_active_subscription, add_purchase,
-    create_prodamus_payment, update_prodamus_payment_url,
-    get_user
+    create_prodamus_payment, update_prodamus_payment_url
 )
 from payments.yookassa import create_invoice, send_receipt_to_tax
-from payments.prodamus import generate_order_num, build_payment_link, get_payment_url
+from payments.prodamus import generate_order_id, build_payment_link, get_payment_url
 from utils.text_utils import strip_html
 from utils.text_loader import get_text
 from utils.logger import log_info, log_error, log_warning
@@ -103,55 +102,9 @@ def grant_access_and_send_invite(
         log_error("payments_common", f"Error notifying admins: {e}")
 
 
-# In-memory state: track users waiting for Prodamus email input
-# Format: {user_id: {"course_id": str, "course": dict}}
-_prodamus_email_pending: dict[int, dict] = {}
-
-
 def register_handlers(bot):
     """Register payment handlers"""
-    
-    # Register email handler FIRST with high priority to catch email input before other handlers
-    # This must be registered before other text handlers to avoid conflicts
-    @bot.message_handler(
-        func=lambda m: (
-            m.from_user and 
-            m.text and
-            not m.text.startswith('/') and
-            m.from_user.id in _prodamus_email_pending and
-            # Exclude menu items that should be handled by other handlers
-            m.text not in ["Каталог", "Активные подписки", "Поддержка", "Оферта", "📊 Все подписки", "📋 Google Sheets"]
-        ),
-        content_types=['text']
-    )
-    def handle_prodamus_email_input(message: types.Message):
-        """Handle email input for Prodamus payment - single attempt"""
-        user_id = message.from_user.id
-        
-        # Check if user is waiting for email (double-check after filter)
-        if user_id not in _prodamus_email_pending:
-            return  # Not waiting for email, let other handlers process
-        
-        log_info("payment_handlers", f"Processing Prodamus email input for user {user_id}")
-        pending_data = _prodamus_email_pending.pop(user_id)  # Remove from pending immediately
-        course_id = pending_data["course_id"]
-        course = pending_data["course"]
-        entered_email = message.text.strip()
-        
-        # Validate email format (single attempt)
-        email_pattern = r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
-        if not re.match(email_pattern, entered_email):
-            log_warning("payment_handlers", f"Invalid email format from user {user_id}: {entered_email}")
-            bot.send_message(
-                user_id,
-                "❌ Неверный формат email. Попробуйте начать оплату через Prodamus ещё раз из каталога."
-            )
-            return
-        
-        # Valid email - proceed with payment link creation
-        log_info("payment_handlers", f"Valid email received from user {user_id}, creating payment link for course {course_id}")
-        create_prodamus_payment_link(bot, user_id, course_id, course, entered_email)
-    
+
     @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_yk_"))
     def cb_pay_yk(c: types.CallbackQuery):
         user_id = c.from_user.id
@@ -266,7 +219,7 @@ def register_handlers(bot):
     # Prodamus payment handlers
     @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_prodamus_"))
     def cb_pay_prodamus(c: types.CallbackQuery):
-        """Handle Prodamus payment button click (ask for email, then create link)"""
+        """Handle Prodamus payment button click (create link immediately)"""
         user_id = c.from_user.id
         course_id = c.data.split("_", 2)[2]
         
@@ -287,21 +240,10 @@ def register_handlers(bot):
         
         bot.answer_callback_query(c.id)
 
-        # Store pending email request in state (this allows the email handler to catch the next message)
-        _prodamus_email_pending[user_id] = {
-            "course_id": course_id,
-            "course": course
-        }
-        log_info("payment_handlers", f"User {user_id} waiting for email input for course {course_id}")
-        
-        # Ask user for email (single attempt)
-        prompt_text = (
-            "Для оплаты через Prodamus укажите, пожалуйста, ваш email.\n\n"
-            "Email будет использован для отправки чека."
-        )
-        bot.send_message(user_id, prompt_text)
+        # Create payment link immediately (no email collection)
+        create_prodamus_payment_link(bot, user_id, course_id, course)
 
-    def create_prodamus_payment_link(bot, user_id: int, course_id: str, course: dict, customer_email: str):
+    def create_prodamus_payment_link(bot, user_id: int, course_id: str, course: dict):
         """Create Prodamus payment link and send it to user"""
         course_name = course.get("name", "Курс")
         price = float(course.get("price", 0))
@@ -311,7 +253,7 @@ def register_handlers(bot):
         conn = get_connection()
         cur = conn.cursor()
         cur.execute(
-            "SELECT order_id, order_num, payment_url FROM prodamus_payments WHERE user_id = ? AND course_id = ? AND payment_status = 'pending' ORDER BY created_at DESC LIMIT 1;",
+            "SELECT order_id, payment_url FROM prodamus_payments WHERE user_id = ? AND course_id = ? AND payment_status = 'pending' ORDER BY created_at DESC LIMIT 1;",
             (user_id, course_id)
         )
         existing_payment = cur.fetchone()
@@ -319,27 +261,21 @@ def register_handlers(bot):
         if existing_payment and existing_payment["payment_url"]:
             # Reuse existing payment with URL
             order_id = existing_payment["order_id"]
-            order_num = existing_payment["order_num"]
             payment_url = existing_payment["payment_url"]
             log_info("payment_handlers", f"Reusing existing payment for user {user_id}, course {course_id}, order_id={order_id}")
         else:
-            # Ensure user exists in database (required for foreign key constraint)
-            from db import add_user
-            add_user(user_id, None)
-            
             # Create new payment record
             payment_created = False
             for attempt in range(3):
                 # Generate new order_id for each attempt (with new timestamp)
-                order_num = generate_order_num(user_id, course_id)
-                order_id = order_num
+                order_id = generate_order_id(user_id, course_id)
                 
                 log_info(
                     "payment_handlers",
                     f"Creating Prodamus payment: user_id={user_id}, course_id={course_id}, "
-                    f"order_id={order_id}, order_num={order_num}, attempt={attempt + 1}"
+                    f"order_id={order_id}, attempt={attempt + 1}"
                 )
-                if create_prodamus_payment(order_id, user_id, course_id, customer_email, order_num):
+                if create_prodamus_payment(order_id, user_id, course_id, ""):
                     payment_created = True
                     break
                 if attempt < 2:
@@ -350,7 +286,7 @@ def register_handlers(bot):
                 log_error(
                     "payment_handlers",
                     f"Failed to create Prodamus payment after retries: "
-                    f"user_id={user_id}, course_id={course_id}, last_order_id={order_id}, last_order_num={order_num}"
+                    f"user_id={user_id}, course_id={course_id}, last_order_id={order_id}"
                 )
                 bot.send_message(user_id, "❌ Ошибка: не удалось создать заказ. Попробуйте позже.")
                 return
@@ -358,26 +294,18 @@ def register_handlers(bot):
             payment_url = None
         
         try:
-            # Get username from database
-            user_info = get_user(user_id)
-            if user_info and "username" in user_info.keys() and user_info["username"]:
-                username = user_info["username"]
-            else:
-                username = "user"
             clean_course_name = strip_html(course_name)
             
             # If we don't have a payment URL yet, create it
             if not payment_url:
                 # Build payment link
-                customer_extra = f"Покупка курса через Telegram бот (tg:@{username})"
+                customer_extra = f"Покупка курса через Telegram бот (user_id: {user_id})"
                 
                 payment_link = build_payment_link(
                     order_id=order_id,
-                    order_num=order_num,
-                    customer_email=customer_email,
                     course_name=clean_course_name,
                     price=price,
-                    customer_extra=customer_extra
+                    customer_extra=customer_extra,
                 )
                 
                 # Get actual payment URL
@@ -385,7 +313,7 @@ def register_handlers(bot):
                 log_info(
                     "payment_handlers",
                     f"Requesting Prodamus payment URL: user_id={user_id}, course_id={course_id}, "
-                    f"order_id={order_id}, order_num={order_num}, link={payment_link[:200]}"
+                    f"order_id={order_id}, link={payment_link[:200]}"
                 )
                 payment_url = get_payment_url(payment_link)
                 
@@ -393,7 +321,7 @@ def register_handlers(bot):
                     log_error(
                         "payment_handlers",
                         f"Failed to get Prodamus payment URL: user_id={user_id}, course_id={course_id}, "
-                        f"order_id={order_id}, order_num={order_num}, link={payment_link[:200]}"
+                        f"order_id={order_id}, link={payment_link[:200]}"
                     )
                     bot.send_message(user_id, "❌ Ошибка при создании ссылки на оплату. Попробуйте позже.")
                     return
@@ -405,7 +333,7 @@ def register_handlers(bot):
                     log_error(
                         "payment_handlers",
                         f"Error updating Prodamus payment URL in DB: user_id={user_id}, course_id={course_id}, "
-                        f"order_id={order_id}, order_num={order_num}, payment_url={payment_url}: {e}",
+                        f"order_id={order_id}, payment_url={payment_url}: {e}",
                         exc_info=True,
                     )
             

@@ -9,11 +9,11 @@ from config import PRODAMUS_BASE_URL
 from utils.logger import log_error, log_warning
 
 
-def generate_order_num(user_id: int, course_id: str) -> str:
+def generate_order_id(user_id: int, course_id: str) -> str:
     """
-    Generate order_num for Prodamus payment.
+    Generate order_id for Prodamus payment.
     Format: user_id_course_id_timestamp (only digits and underscores),
-    used in webhook to identify user and course.
+    used to identify user and course.
     """
     timestamp = int(time.time())
     return f"{user_id}_{course_id}_{timestamp}"
@@ -21,8 +21,6 @@ def generate_order_num(user_id: int, course_id: str) -> str:
 
 def build_payment_link(
     order_id: str,
-    order_num: str,
-    customer_email: str,
     course_name: str,
     price: float,
     customer_extra: str = ""
@@ -33,14 +31,11 @@ def build_payment_link(
     base_url = PRODAMUS_BASE_URL.rstrip('/')
     
     params = {
-        # Prodamus will echo order_num back in webhook, we use it as main identifier
         'order_id': order_id,
-        'order_num': order_num,
-        'customer_email': customer_email,
         'products[0][price]': str(price),
         'products[0][quantity]': '1',
         'products[0][name]': course_name,
-        'do': 'pay'
+        'do': 'link',
     }
     
     if customer_extra:
@@ -60,6 +55,7 @@ def get_payment_url(payment_link: str) -> Optional[str]:
     """
     try:
         # Follow redirects and get final URL
+        from utils.logger import log_info
         log_info_prefix = f"get_payment_url: link={payment_link[:200]}"
         response = requests.get(payment_link, allow_redirects=True, timeout=10)
 

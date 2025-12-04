@@ -8,7 +8,7 @@ from typing import Dict, Optional
 from flask import request
 
 from config import PRODAMUS_SECRET_KEY, ADMIN_IDS
-from db import update_prodamus_payment_status, get_user
+from db import update_prodamus_payment_status, get_prodamus_payment
 from google_sheets import get_courses_data
 from handlers import payment_handlers
 from utils.logger import log_info, log_error, log_warning
@@ -150,37 +150,44 @@ def parse_request_data() -> dict:
         return request.form.to_dict()
 
 
-def parse_order_num(order_num: str) -> tuple[Optional[int], Optional[str]]:
+def parse_order_id(order_id: str) -> tuple[Optional[int], Optional[str]]:
     """
-    Parse order_num in format "user_id_course_id_timestamp".
+    Parse order_id in format "user_id_course_id_timestamp".
     
     Returns (user_id, course_id) or (None, None) if parsing fails.
     """
     try:
-        parts = order_num.split("_", 2)
+        parts = order_id.split("_", 2)
         if len(parts) >= 2:
             user_id = int(parts[0])
             course_id = parts[1]
             return user_id, course_id
     except (ValueError, IndexError) as e:
-        log_error("prodamus_webhook", f"Failed to parse order_num '{order_num}': {e}")
+        log_error("prodamus_webhook", f"Failed to parse order_id '{order_id}': {e}")
     
     return None, None
 
 
 def handle_successful_payment(bot, payload: dict) -> None:
     """Handle successful Prodamus payment."""
-    order_num = payload.get("order_num", "")
     order_id = payload.get("order_id", "")
     customer_email = payload.get("customer_email", "")
     sum_amount = payload.get("sum", "0")
     
-    log_info("prodamus_webhook", f"Processing successful payment: order_num={order_num}, order_id={order_id}")
+    log_info("prodamus_webhook", f"Processing successful payment: order_id={order_id}")
     
-    user_id, course_id = parse_order_num(order_num)
-    if not user_id or not course_id:
-        log_warning("prodamus_webhook", f"Could not parse order_num: {order_num}")
+    if not order_id:
+        log_warning("prodamus_webhook", "Missing order_id in payload")
         return
+    
+    # Get payment record from database to extract user_id and course_id
+    payment = get_prodamus_payment(order_id)
+    if not payment:
+        log_warning("prodamus_webhook", f"Payment not found for order_id: {order_id}")
+        return
+    
+    user_id = payment["user_id"]
+    course_id = payment["course_id"]
     
     # Get course data
     try:
@@ -207,15 +214,6 @@ def handle_successful_payment(bot, payload: dict) -> None:
     except (ValueError, TypeError):
         amount_float = 0.0
     
-    # Get username for logging
-    tg_username = None
-    try:
-        db_user = get_user(user_id)
-        if db_user and "username" in db_user.keys():
-            tg_username = db_user["username"]
-    except Exception:
-        pass
-    
     # Grant access and send invite
     payment_handlers.grant_access_and_send_invite(
         bot=bot,
@@ -233,37 +231,29 @@ def handle_successful_payment(bot, payload: dict) -> None:
     )
     
     log_info("prodamus_webhook",
-             f"Payment processed: user_id={user_id}, username={tg_username}, email={customer_email}, "
-             f"order_id={order_id}, order_num={order_num}")
+             f"Payment processed: user_id={user_id}, email={customer_email}, "
+             f"order_id={order_id}")
 
 
 def handle_failed_payment(bot, payload: dict) -> None:
     """Handle failed Prodamus payment."""
-    order_num = payload.get("order_num", "")
+    order_id = payload.get("order_id", "")
     payment_status = payload.get("payment_status", "")
     
-    log_info("prodamus_webhook", f"Payment failed: status={payment_status}, order_num={order_num}")
+    log_info("prodamus_webhook", f"Payment failed: status={payment_status}, order_id={order_id}")
     
-    # Parse order_num using the standard parser (handles underscore format: user_id_course_id_timestamp)
-    # Also supports legacy colon format for backward compatibility
-    user_id = None
-    course_id = None
-    
-    if "_" in order_num:
-        # New format: user_id_course_id_timestamp
-        user_id, course_id = parse_order_num(order_num)
-    elif ":" in order_num:
-        # Legacy format: user_id:course_id
-        try:
-            parts = order_num.split(":", 1)
-            user_id = int(parts[0])
-            course_id = parts[1]
-        except (ValueError, IndexError) as e:
-            log_error("prodamus_webhook", f"Error parsing legacy order_num for failed payment '{order_num}': {e}")
-    
-    if not user_id or not course_id:
-        log_warning("prodamus_webhook", f"Could not parse order_num for failed payment: {order_num}")
+    if not order_id:
+        log_warning("prodamus_webhook", "Missing order_id in payload for failed payment")
         return
+    
+    # Get payment record from database to extract user_id and course_id
+    payment = get_prodamus_payment(order_id)
+    if not payment:
+        log_warning("prodamus_webhook", f"Payment not found for order_id: {order_id}")
+        return
+    
+    user_id = payment["user_id"]
+    course_id = payment["course_id"]
     
     # Get course name
     try:
@@ -291,13 +281,11 @@ def notify_admins_invalid_signature(bot, payload_data: dict, provided_signature:
     """Notify admins about invalid webhook signature."""
     try:
         order_id = payload_data.get("order_id", "unknown")
-        order_num = payload_data.get("order_num", "unknown")
         payment_status = payload_data.get("payment_status", "unknown")
         
         admin_text = (
             f"⚠️ Prodamus webhook с неподтверждённой подписью!\n\n"
             f"Order ID: {order_id}\n"
-            f"Order Num: {order_num}\n"
             f"Payment Status: {payment_status}\n"
             f"Provided Sign: {provided_signature[:20]}...\n"
             f"Calculated Sign: {calculated_signature[:20]}...\n\n"
@@ -358,15 +346,14 @@ def process_webhook(bot) -> tuple[str, int]:
         # Build payload for processing
         payload = build_hmac_payload(flat_form)
         payment_status = payload.get("payment_status", "")
-        order_num = payload.get("order_num", "")
         order_id = payload.get("order_id", "")
         
-        log_info("prodamus_webhook", f"Payment status: {payment_status}")
+        log_info("prodamus_webhook", f"Payment status: {payment_status}, order_id: {order_id}")
         
         # Update payment status in database
-        if order_num:
+        if order_id:
             try:
-                update_prodamus_payment_status(order_num, payment_status)
+                update_prodamus_payment_status(order_id, payment_status)
             except Exception as e:
                 log_error("prodamus_webhook", f"Error updating payment status: {e}")
         

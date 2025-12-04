@@ -3,7 +3,7 @@
 
 import datetime
 from telebot import types
-from db import add_user, get_active_subscriptions
+from db import get_active_subscriptions
 from utils.keyboards import get_main_menu_keyboard
 from utils.text_utils import strip_html
 from utils.images import get_local_image_path
@@ -20,8 +20,6 @@ def register_handlers(bot):
     @bot.message_handler(commands=['start'])
     def handle_start(message: types.Message):
         user_id = message.from_user.id
-        username = message.from_user.username or ""
-        add_user(user_id, username)
 
         # Use dynamic keyboard that includes admin buttons if user is admin
         keyboard = get_main_menu_keyboard(user_id)

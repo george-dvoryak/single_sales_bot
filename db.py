@@ -35,14 +35,6 @@ def init_db(conn):
     cur = conn.cursor()
     cur.execute(
         """
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT
-        )
-        """
-    )
-    cur.execute(
-        """
         CREATE TABLE IF NOT EXISTS purchases (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -50,8 +42,7 @@ def init_db(conn):
             course_name TEXT,
             channel_id TEXT,
             expiry INTEGER,    -- UNIX timestamp (UTC)
-            payment_id TEXT,
-            FOREIGN KEY(user_id) REFERENCES users(user_id)
+            payment_id TEXT
         )
         """
     )
@@ -65,45 +56,13 @@ def init_db(conn):
             customer_email TEXT,
             payment_url TEXT,
             payment_status TEXT,
-            order_num TEXT,
             created_at INTEGER,
-            updated_at INTEGER,
-            FOREIGN KEY(user_id) REFERENCES users(user_id)
+            updated_at INTEGER
         )
         """
     )
     conn.commit()
 
-def add_user(user_id: int, username: str = None):
-    """
-    Add or update a user in the database.
-    
-    Args:
-        user_id: Telegram user ID
-        username: Telegram username (optional)
-    """
-    conn = get_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute("INSERT INTO users (user_id, username) VALUES (?, ?);", (user_id, username))
-    except sqlite3.IntegrityError:
-        cur.execute("UPDATE users SET username = ? WHERE user_id = ?;", (username, user_id))
-    conn.commit()
-
-def get_user(user_id: int):
-    """
-    Get user by ID.
-    
-    Args:
-        user_id: Telegram user ID
-        
-    Returns:
-        sqlite3.Row or None: User record if found
-    """
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE user_id = ?;", (user_id,))
-    return cur.fetchone()
 
 def add_purchase(user_id: int, course_id: str, course_name: str, channel_id: str, duration_days: int, payment_id: str = None):
     """
@@ -257,7 +216,7 @@ def get_all_active_subscriptions():
 
 
 # Prodamus payment tracking functions
-def create_prodamus_payment(order_id: str, user_id: int, course_id: str, customer_email: str, order_num: str):
+def create_prodamus_payment(order_id: str, user_id: int, course_id: str, customer_email: str):
     """
     Create a new Prodamus payment record.
     
@@ -266,7 +225,6 @@ def create_prodamus_payment(order_id: str, user_id: int, course_id: str, custome
         user_id: Telegram user ID
         course_id: Course ID
         customer_email: Customer email address
-        order_num: Order number (format: user_id_course_id_timestamp)
         
     Returns:
         bool: True if created successfully, False if duplicate or error
@@ -277,10 +235,10 @@ def create_prodamus_payment(order_id: str, user_id: int, course_id: str, custome
     try:
         cur.execute(
             """
-            INSERT INTO prodamus_payments (order_id, user_id, course_id, customer_email, order_num, payment_status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?);
+            INSERT INTO prodamus_payments (order_id, user_id, course_id, customer_email, payment_status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?);
             """,
-            (order_id, user_id, course_id, customer_email, order_num, now, now)
+            (order_id, user_id, course_id, customer_email, now, now)
         )
         conn.commit()
         return True
@@ -325,7 +283,7 @@ def update_prodamus_payment_status(order_id: str, payment_status: str):
     Update payment status for a Prodamus payment.
     
     Args:
-        order_id: Order ID or order_num
+        order_id: Order ID
         payment_status: Payment status (e.g., "success", "pending", "failed")
     """
     conn = get_connection()
@@ -363,23 +321,4 @@ def get_prodamus_payment(order_id: str):
     return cur.fetchone()
 
 
-def get_prodamus_payment_by_order_num(order_num: str):
-    """
-    Get Prodamus payment by order_num.
-    
-    Args:
-        order_num: Order number (format: user_id_course_id_timestamp)
-        
-    Returns:
-        sqlite3.Row or None: Payment record if found
-    """
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT * FROM prodamus_payments WHERE order_num = ?;
-        """,
-        (order_num,)
-    )
-    return cur.fetchone()
 

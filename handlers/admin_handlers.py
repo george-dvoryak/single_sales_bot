@@ -5,7 +5,7 @@ import sqlite3
 import time
 import datetime
 from telebot import types
-from db import get_all_active_subscriptions, get_user, get_expired_subscriptions, mark_subscription_expired, get_connection
+from db import get_all_active_subscriptions, get_expired_subscriptions, mark_subscription_expired, get_connection
 from utils.text_utils import strip_html
 from utils.channel import remove_user_from_channel, check_course_channels
 from google_sheets import get_courses_data
@@ -43,10 +43,7 @@ def register_handlers(bot):
             text = f"📊 Все активные подписки ({len(all_subs)} всего):\n\n"
             
             for uid, subs in sorted(user_subs.items()):
-                # Try to get username
-                user_info = get_user(uid)
-                username = user_info["username"] if user_info and user_info["username"] else f"ID {uid}"
-                text += f"👤 {username} (ID: {uid}):\n"
+                text += f"👤 ID {uid}:\n"
                 
                 for s in subs:
                     course_name = s["course_name"]
