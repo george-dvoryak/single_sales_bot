@@ -31,6 +31,7 @@ CURRENCY = os.getenv("CURRENCY", "RUB")
 # === PAYMENTS (Prodamus) ===
 PRODAMUS_SECRET_KEY = os.getenv("PRODAMUS_SECRET_KEY", "")
 PRODAMUS_BASE_URL = os.getenv("PRODAMUS_BASE_URL", "https://demo.payform.ru")
+PRODAMUS_FIXED_EMAIL = "orders.makeup@gmail.com"
 
 # === Images ===
 # Local directory where the bot will cache downloaded images from Google Sheets

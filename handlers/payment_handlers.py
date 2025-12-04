@@ -1,21 +1,20 @@
 # handlers/payment_handlers.py
 """Payment processing handlers."""
 
-import re
 import time
 from telebot import types
 from google_sheets import get_courses_data
 from db import (
-    has_active_subscription, add_purchase, add_user,
+    has_active_subscription, add_purchase,
     create_prodamus_payment, update_prodamus_payment_url,
-    get_user_email, set_user_email, get_user
+    get_user
 )
 from payments.yookassa import create_invoice, send_receipt_to_tax
 from payments.prodamus import generate_order_num, build_payment_link, get_payment_url
 from utils.text_utils import strip_html
 from utils.text_loader import get_text
 from utils.logger import log_info, log_error, log_warning
-from config import ADMIN_IDS, CURRENCY
+from config import ADMIN_IDS, CURRENCY, PRODAMUS_FIXED_EMAIL
 
 
 COURSE_NOT_AVAILABLE_MSG = get_text("course_not_available_message", "Извините, курс сейчас недоступен.")
@@ -105,59 +104,6 @@ def grant_access_and_send_invite(
 
 def register_handlers(bot):
     """Register payment handlers"""
-    
-    # Handler for Prodamus email input - check if user doesn't have email and has pending payment
-    @bot.message_handler(
-        func=lambda m: (
-            m.from_user and 
-            m.text and
-            not m.text.startswith('/') and
-            m.text not in ["Каталог", "Активные подписки", "Поддержка", "Оферта", "📊 Все подписки", "📋 Google Sheets"]
-        ),
-        content_types=['text']
-    )
-    def handle_prodamus_email_input(message: types.Message):
-        """Handle email input for Prodamus payment - simple validation and processing"""
-        user_id = message.from_user.id
-        
-        # Check if user has email in DB - if yes, ignore this message
-        if get_user_email(user_id):
-            return
-        
-        # Check for pending Prodamus payment
-        from db import get_connection
-        conn = get_connection()
-        cur = conn.cursor()
-        # Find most recent pending payment for this user
-        cur.execute(
-            "SELECT course_id FROM prodamus_payments WHERE user_id = ? AND payment_status = 'pending' ORDER BY created_at DESC LIMIT 1;",
-            (user_id,)
-        )
-        row = cur.fetchone()
-        
-        if not row:
-            # No pending payment, ignore
-            return
-        
-        course_id = row["course_id"]
-        email = message.text.strip()
-        
-        # Validate email format
-        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        if not re.match(email_pattern, email):
-            # Invalid email - respond immediately
-            bot.send_message(user_id, "❌ Неверный формат email адреса. Пожалуйста, отправьте корректный email:")
-            return
-        
-        # Valid email - save and proceed
-        if not set_user_email(user_id, email):
-            bot.send_message(user_id, "❌ Ошибка при сохранении email. Попробуйте еще раз.")
-            return
-        
-        log_info("payment_handlers", f"User {user_id} email saved, proceeding with payment for course {course_id}")
-        
-        # Proceed with payment link creation
-        create_prodamus_payment_link(bot, user_id, course_id, email)
     
     @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_yk_"))
     def cb_pay_yk(c: types.CallbackQuery):
@@ -273,7 +219,7 @@ def register_handlers(bot):
     # Prodamus payment handlers
     @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_prodamus_"))
     def cb_pay_prodamus(c: types.CallbackQuery):
-        """Handle Prodamus payment button click - check for email and proceed"""
+        """Handle Prodamus payment button click"""
         user_id = c.from_user.id
         course_id = c.data.split("_", 2)[2]
         
@@ -293,101 +239,44 @@ def register_handlers(bot):
             return
         
         bot.answer_callback_query(c.id)
-        
-        # Check if user has email in database
-        email = get_user_email(user_id)
-        
-        if email:
-            # User has email, proceed directly to payment link creation
-            log_info("payment_handlers", f"User {user_id} has email in DB, proceeding with payment for course {course_id}")
-            create_prodamus_payment_link(bot, user_id, course_id, email)
-        else:
-            # Create pending payment record first (so email handler can find the course_id)
-            order_num = generate_order_num(user_id, course_id)
-            order_id = order_num
-            # Create payment record with empty email for now
-            create_prodamus_payment(order_id, user_id, course_id, "", order_num)
-            
-            # Ask for email
-            log_info("payment_handlers", f"User {user_id} needs to provide email for course {course_id}")
-            text = "Для оплаты через Prodamus необходимо указать ваш email адрес.\n\nПожалуйста, отправьте ваш email:"
-            kb = types.InlineKeyboardMarkup()
-            kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
-            bot.send_message(user_id, text, reply_markup=kb)
+        create_prodamus_payment_link(bot, user_id, course_id, course)
 
-    def create_prodamus_payment_link(bot, user_id: int, course_id: str, email: str):
+    def create_prodamus_payment_link(bot, user_id: int, course_id: str, course: dict):
         """Create Prodamus payment link and send it to user"""
-        try:
-            courses = get_courses_data()
-        except Exception as e:
-            log_error("payment_handlers", f"Error fetching courses for user {user_id}: {e}")
-            bot.send_message(user_id, "Ошибка: не удалось получить данные курса.")
-            return
-        
-        course = next((x for x in courses if str(x.get("id")) == str(course_id)), None)
-        if not course:
-            log_warning("payment_handlers", f"Course {course_id} not found for user {user_id}")
-            bot.send_message(user_id, COURSE_NOT_AVAILABLE_MSG)
-            return
-        
         course_name = course.get("name", "Курс")
         price = float(course.get("price", 0))
         
-        # Find existing pending payment or create new one
-        from db import get_connection
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT order_id, order_num FROM prodamus_payments WHERE user_id = ? AND course_id = ? AND payment_status = 'pending' ORDER BY created_at DESC LIMIT 1;",
-            (user_id, course_id)
-        )
-        row = cur.fetchone()
+        # Create payment record
+        order_num = generate_order_num(user_id, course_id)
+        order_id = order_num
         
-        if row:
-            order_id = row["order_id"]
-            order_num = row["order_num"]
-            # Update email in payment record
-            cur.execute(
-                "UPDATE prodamus_payments SET customer_email = ? WHERE order_id = ?;",
-                (email, order_id)
-            )
-            conn.commit()
-        else:
-            # Create new payment record
-            order_num = generate_order_num(user_id, course_id)
-            order_id = order_num
-            payment_created = False
-            for attempt in range(2):
-                if create_prodamus_payment(order_id, user_id, course_id, email, order_num):
-                    payment_created = True
-                    break
-                if attempt == 0:
-                    time.sleep(0.2)
-                    log_info("payment_handlers", f"Retrying payment creation for user {user_id}, order_id={order_id}")
-            
-            if not payment_created:
-                log_error("payment_handlers", f"Failed to create Prodamus payment after retries: user_id={user_id}, order_id={order_id}, course_id={course_id}")
-                bot.send_message(user_id, "❌ Ошибка: не удалось создать заказ. Возможно, заказ с таким номером уже существует. Попробуйте начать заново.")
-                return
+        payment_created = False
+        for attempt in range(2):
+            if create_prodamus_payment(order_id, user_id, course_id, PRODAMUS_FIXED_EMAIL, order_num):
+                payment_created = True
+                break
+            if attempt == 0:
+                time.sleep(0.2)
+                log_info("payment_handlers", f"Retrying payment creation for user {user_id}, order_id={order_id}")
+        
+        if not payment_created:
+            log_error("payment_handlers", f"Failed to create Prodamus payment after retries: user_id={user_id}, order_id={order_id}, course_id={course_id}")
+            bot.send_message(user_id, "❌ Ошибка: не удалось создать заказ. Попробуйте позже.")
+            return
         
         try:
             # Get username from database
             user_info = get_user(user_id)
-            if user_info and "username" in user_info.keys() and user_info["username"]:
-                username = user_info["username"]
-            else:
-                username = "user"
+            username = user_info.get("username", "user") if user_info else "user"
             
             # Build payment link
-            customer_phone = ""
             customer_extra = f"Покупка курса через Telegram бот (tg:@{username})"
             clean_course_name = strip_html(course_name)
             
             payment_link = build_payment_link(
                 order_id=order_id,
                 order_num=order_num,
-                customer_email=email,
-                customer_phone=customer_phone,
+                customer_phone="",
                 course_name=clean_course_name,
                 price=price,
                 customer_extra=customer_extra
