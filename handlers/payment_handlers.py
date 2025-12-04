@@ -240,10 +240,15 @@ def register_handlers(bot):
         
         bot.answer_callback_query(c.id)
 
-        # Create payment link immediately (no email collection)
-        create_prodamus_payment_link(bot, user_id, course_id, course)
+        # Get course message ID and chat ID from the callback query
+        course_message_id = c.message.message_id if c.message else None
+        chat_id = c.message.chat.id if c.message else user_id
 
-    def create_prodamus_payment_link(bot, user_id: int, course_id: str, course: dict):
+        # Create payment link immediately (no email collection)
+        create_prodamus_payment_link(bot, user_id, course_id, course, course_message_id, chat_id)
+
+    def create_prodamus_payment_link(bot, user_id: int, course_id: str, course: dict, 
+                                     course_message_id: int = None, chat_id: int = None):
         """Create Prodamus payment link and send it to user"""
         course_name = course.get("name", "Курс")
         price = float(course.get("price", 0))
@@ -275,7 +280,7 @@ def register_handlers(bot):
                     f"Creating Prodamus payment: user_id={user_id}, course_id={course_id}, "
                     f"order_id={order_id}, attempt={attempt + 1}"
                 )
-                if create_prodamus_payment(order_id, user_id, course_id, ""):
+                if create_prodamus_payment(order_id, user_id, course_id, "", course_message_id, chat_id):
                     payment_created = True
                     break
                 if attempt < 2:
@@ -309,7 +314,7 @@ def register_handlers(bot):
                 )
                 
                 # Get actual payment URL
-                bot.send_message(user_id, "⏳ Создаю ссылку на оплату...")
+                loading_msg = bot.send_message(user_id, "⏳ Создаю ссылку на оплату...")
                 log_info(
                     "payment_handlers",
                     f"Requesting Prodamus payment URL: user_id={user_id}, course_id={course_id}, "
@@ -318,6 +323,12 @@ def register_handlers(bot):
                 payment_url = get_payment_url(payment_link)
                 
                 if not payment_url:
+                    # Delete loading message if payment URL creation failed
+                    if loading_msg and loading_msg.message_id:
+                        try:
+                            bot.delete_message(chat_id=user_id, message_id=loading_msg.message_id)
+                        except Exception:
+                            pass
                     log_error(
                         "payment_handlers",
                         f"Failed to get Prodamus payment URL: user_id={user_id}, course_id={course_id}, "
@@ -342,7 +353,22 @@ def register_handlers(bot):
             kb = types.InlineKeyboardMarkup()
             kb.add(types.InlineKeyboardButton("💳 Перейти к оплате", url=payment_url))
             kb.add(types.InlineKeyboardButton("⬅️ Назад к каталогу", callback_data="back_to_catalog"))
-            bot.send_message(user_id, text, reply_markup=kb)
+            payment_msg = bot.send_message(user_id, text, reply_markup=kb)
+            
+            # Delete loading message if it exists
+            if 'loading_msg' in locals() and loading_msg and loading_msg.message_id:
+                try:
+                    bot.delete_message(chat_id=user_id, message_id=loading_msg.message_id)
+                except Exception:
+                    pass  # Message might already be deleted or too old
+            
+            # Store payment message ID in database
+            if payment_msg and payment_msg.message_id:
+                try:
+                    update_prodamus_payment_url(order_id, payment_url, payment_msg.message_id)
+                except Exception as e:
+                    log_warning("payment_handlers", f"Could not update payment_message_id: {e}")
+            
             log_info("payment_handlers", f"Payment link sent to user {user_id} for course {course_id}, order_id={order_id}")
         except Exception as e:
             log_error("payment_handlers", f"Error creating payment link for user {user_id}: {e}", exc_info=True)
