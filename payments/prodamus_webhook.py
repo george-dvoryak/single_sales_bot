@@ -8,7 +8,13 @@ from typing import Dict, Optional
 from flask import request
 
 from config import PRODAMUS_SECRET_KEY, ADMIN_IDS
-from db import update_prodamus_payment_status, get_prodamus_payment
+from db import (
+    update_prodamus_payment_status, 
+    update_prodamus_payment_status_by_order_num,
+    get_prodamus_payment,
+    get_prodamus_payment_by_order_num,
+    update_prodamus_order_num
+)
 from google_sheets import get_courses_data
 from handlers import payment_handlers
 from utils.logger import log_info, log_error, log_warning
@@ -171,19 +177,35 @@ def parse_order_id(order_id: str) -> tuple[Optional[int], Optional[str]]:
 def handle_successful_payment(bot, payload: dict) -> None:
     """Handle successful Prodamus payment."""
     order_id = payload.get("order_id", "")
+    order_num = payload.get("order_num", "")
     customer_email = payload.get("customer_email", "")
     sum_amount = payload.get("sum", "0")
     
-    log_info("prodamus_webhook", f"Processing successful payment: order_id={order_id}")
+    log_info("prodamus_webhook", f"Processing successful payment: order_id={order_id}, order_num={order_num}")
     
-    if not order_id:
-        log_warning("prodamus_webhook", "Missing order_id in payload")
-        return
+    # Try to find payment by order_id first (our custom order_id)
+    payment = None
+    if order_id:
+        payment = get_prodamus_payment(order_id)
+        if payment and order_num:
+            # Store Prodamus order_num for future lookups
+            try:
+                update_prodamus_order_num(order_id, order_num)
+            except Exception as e:
+                log_warning("prodamus_webhook", f"Could not update order_num: {e}")
     
-    # Get payment record from database to extract user_id and course_id
-    payment = get_prodamus_payment(order_id)
+    # If not found by order_id, try order_num (Prodamus internal ID)
+    if not payment and order_num:
+        payment = get_prodamus_payment_by_order_num(order_num)
+        if payment and order_id:
+            # Store Prodamus order_num if we found payment by order_num
+            try:
+                update_prodamus_order_num(payment["order_id"], order_num)
+            except Exception as e:
+                log_warning("prodamus_webhook", f"Could not update order_num: {e}")
+    
     if not payment:
-        log_warning("prodamus_webhook", f"Payment not found for order_id: {order_id}")
+        log_warning("prodamus_webhook", f"Payment not found for order_id={order_id}, order_num={order_num}")
         return
     
     user_id = payment["user_id"]
@@ -215,6 +237,8 @@ def handle_successful_payment(bot, payload: dict) -> None:
         amount_float = 0.0
     
     # Grant access and send invite
+    # Use order_num as payment_id if available (Prodamus transaction ID), otherwise use order_id
+    payment_id_value = f"prodamus_{order_num}" if order_num else f"prodamus_{order_id}"
     payment_handlers.grant_access_and_send_invite(
         bot=bot,
         user_id=user_id,
@@ -222,7 +246,7 @@ def handle_successful_payment(bot, payload: dict) -> None:
         course_name=course_name,
         duration_days=duration_days,
         channel=channel,
-        payment_id=f"prodamus_{order_id}",
+        payment_id=payment_id_value,
         amount=amount_float,
         currency="RUB",
         buyer_email=customer_email,
@@ -238,18 +262,34 @@ def handle_successful_payment(bot, payload: dict) -> None:
 def handle_failed_payment(bot, payload: dict) -> None:
     """Handle failed Prodamus payment."""
     order_id = payload.get("order_id", "")
+    order_num = payload.get("order_num", "")
     payment_status = payload.get("payment_status", "")
     
-    log_info("prodamus_webhook", f"Payment failed: status={payment_status}, order_id={order_id}")
+    log_info("prodamus_webhook", f"Payment failed: status={payment_status}, order_id={order_id}, order_num={order_num}")
     
-    if not order_id:
-        log_warning("prodamus_webhook", "Missing order_id in payload for failed payment")
-        return
+    # Try to find payment by order_id first (our custom order_id)
+    payment = None
+    if order_id:
+        payment = get_prodamus_payment(order_id)
+        if payment and order_num:
+            # Store Prodamus order_num for future lookups
+            try:
+                update_prodamus_order_num(order_id, order_num)
+            except Exception as e:
+                log_warning("prodamus_webhook", f"Could not update order_num: {e}")
     
-    # Get payment record from database to extract user_id and course_id
-    payment = get_prodamus_payment(order_id)
+    # If not found by order_id, try order_num (Prodamus internal ID)
+    if not payment and order_num:
+        payment = get_prodamus_payment_by_order_num(order_num)
+        if payment and order_id:
+            # Store Prodamus order_num if we found payment by order_num
+            try:
+                update_prodamus_order_num(payment["order_id"], order_num)
+            except Exception as e:
+                log_warning("prodamus_webhook", f"Could not update order_num: {e}")
+    
     if not payment:
-        log_warning("prodamus_webhook", f"Payment not found for order_id: {order_id}")
+        log_warning("prodamus_webhook", f"Payment not found for order_id={order_id}, order_num={order_num}")
         return
     
     user_id = payment["user_id"]
@@ -347,15 +387,35 @@ def process_webhook(bot) -> tuple[str, int]:
         payload = build_hmac_payload(flat_form)
         payment_status = payload.get("payment_status", "")
         order_id = payload.get("order_id", "")
+        order_num = payload.get("order_num", "")
         
-        log_info("prodamus_webhook", f"Payment status: {payment_status}, order_id: {order_id}")
+        log_info("prodamus_webhook", f"Payment status: {payment_status}, order_id: {order_id}, order_num: {order_num}")
         
         # Update payment status in database
+        # Try by order_id first, then by order_num
         if order_id:
             try:
                 update_prodamus_payment_status(order_id, payment_status)
+                # Also store order_num if provided
+                if order_num:
+                    try:
+                        update_prodamus_order_num(order_id, order_num)
+                    except Exception as e:
+                        log_warning("prodamus_webhook", f"Could not update order_num: {e}")
             except Exception as e:
-                log_error("prodamus_webhook", f"Error updating payment status: {e}")
+                log_error("prodamus_webhook", f"Error updating payment status by order_id: {e}")
+                # Try by order_num as fallback
+                if order_num:
+                    try:
+                        update_prodamus_payment_status_by_order_num(order_num, payment_status)
+                    except Exception as e2:
+                        log_error("prodamus_webhook", f"Error updating payment status by order_num: {e2}")
+        elif order_num:
+            # Only order_num available
+            try:
+                update_prodamus_payment_status_by_order_num(order_num, payment_status)
+            except Exception as e:
+                log_error("prodamus_webhook", f"Error updating payment status by order_num: {e}")
         
         # Handle payment status
         if payment_status == "success":

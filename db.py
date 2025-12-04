@@ -51,6 +51,7 @@ def init_db(conn):
         CREATE TABLE IF NOT EXISTS prodamus_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             order_id TEXT UNIQUE,
+            prodamus_order_num TEXT,
             user_id INTEGER,
             course_id TEXT,
             customer_email TEXT,
@@ -61,6 +62,13 @@ def init_db(conn):
         )
         """
     )
+    # Add prodamus_order_num column if it doesn't exist (migration)
+    try:
+        cur.execute("ALTER TABLE prodamus_payments ADD COLUMN prodamus_order_num TEXT;")
+        conn.commit()
+    except sqlite3.OperationalError:
+        # Column already exists, ignore
+        pass
     conn.commit()
 
 
@@ -280,7 +288,7 @@ def update_prodamus_payment_url(order_id: str, payment_url: str):
 
 def update_prodamus_payment_status(order_id: str, payment_status: str):
     """
-    Update payment status for a Prodamus payment.
+    Update payment status for a Prodamus payment by order_id.
     
     Args:
         order_id: Order ID
@@ -296,6 +304,28 @@ def update_prodamus_payment_status(order_id: str, payment_status: str):
         WHERE order_id = ?;
         """,
         (payment_status, now, order_id)
+    )
+    conn.commit()
+
+
+def update_prodamus_payment_status_by_order_num(order_num: str, payment_status: str):
+    """
+    Update payment status for a Prodamus payment by order_num.
+    
+    Args:
+        order_num: Prodamus internal order number
+        payment_status: Payment status (e.g., "success", "pending", "failed")
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    now = int(time.time())
+    cur.execute(
+        """
+        UPDATE prodamus_payments 
+        SET payment_status = ?, updated_at = ?
+        WHERE prodamus_order_num = ?;
+        """,
+        (payment_status, now, order_num)
     )
     conn.commit()
 
@@ -319,6 +349,49 @@ def get_prodamus_payment(order_id: str):
         (order_id,)
     )
     return cur.fetchone()
+
+
+def get_prodamus_payment_by_order_num(order_num: str):
+    """
+    Get Prodamus payment by Prodamus order_num.
+    
+    Args:
+        order_num: Prodamus internal order number
+        
+    Returns:
+        sqlite3.Row or None: Payment record if found
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT * FROM prodamus_payments WHERE prodamus_order_num = ?;
+        """,
+        (order_num,)
+    )
+    return cur.fetchone()
+
+
+def update_prodamus_order_num(order_id: str, order_num: str):
+    """
+    Update Prodamus order_num for a payment.
+    
+    Args:
+        order_id: Our order ID
+        order_num: Prodamus internal order number
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    now = int(time.time())
+    cur.execute(
+        """
+        UPDATE prodamus_payments 
+        SET prodamus_order_num = ?, updated_at = ?
+        WHERE order_id = ?;
+        """,
+        (order_num, now, order_id)
+    )
+    conn.commit()
 
 
 
