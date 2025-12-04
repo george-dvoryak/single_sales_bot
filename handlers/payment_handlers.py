@@ -338,7 +338,7 @@ def register_handlers(bot):
                     )
             
             # Send payment link to user
-            text = f"💳 Ссылка на оплату курса \"{clean_course_name}\":\n\n{payment_url}\n\nПосле успешной оплаты доступ к курсу будет предоставлен автоматически."
+            text = f"💳 Ссылка на оплату курса \"{clean_course_name}\":\n\n{payment_url}\n\nПосле успешной оплаты доступ к курсу будет предоставлен автоматически в течение 5 минут."
             kb = types.InlineKeyboardMarkup()
             kb.add(types.InlineKeyboardButton("💳 Перейти к оплате", url=payment_url))
             kb.add(types.InlineKeyboardButton("⬅️ Назад к каталогу", callback_data="back_to_catalog"))

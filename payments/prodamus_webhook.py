@@ -249,7 +249,7 @@ def handle_successful_payment(bot, payload: dict) -> None:
         amount=amount_float,
         currency="RUB",
         buyer_email=customer_email,
-        purchase_receipt_msg="Чек об оплате будет отправлен на ваш email в системе Prodamus.",
+        purchase_receipt_msg="Чек об оплате будет отправлен на ваш email.",
         admin_prefix="Оплата (Prodamus)",
     )
     
