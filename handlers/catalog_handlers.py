@@ -5,7 +5,7 @@ from telebot import types
 from google_sheets import get_courses_data
 from db import has_active_subscription
 from utils.keyboards import create_catalog_keyboard, create_course_buttons
-from utils.text_utils import strip_html
+from utils.text_utils import strip_html, format_for_telegram_html
 from utils.images import get_local_image_path
 from utils.text_loader import get_text, get_texts
 from utils.logger import log_error, log_warning, log_info
@@ -47,7 +47,7 @@ def register_handlers(bot):
         kb = create_catalog_keyboard(courses)
         texts = get_texts()
         banner_url = texts.get("catalog_image_url")
-        caption = texts.get("catalog_text", CATALOG_TITLE)
+        caption = format_for_telegram_html(texts.get("catalog_text", CATALOG_TITLE))
         
         if edit_message:
             # When going back to catalog, always delete old message and send new one
@@ -61,19 +61,19 @@ def register_handlers(bot):
                 if banner_url:
                     local_path = get_local_image_path(banner_url)
                     if local_path:
-                        try:
-                            with open(local_path, "rb") as photo:
-                                bot.send_photo(user_id, photo, caption=caption, reply_markup=kb)
+                    try:
+                        with open(local_path, "rb") as photo:
+                            bot.send_photo(user_id, photo, caption=caption, reply_markup=kb, parse_mode='HTML')
                         except Exception as e:
                             log_warning("catalog_handlers", f"send_photo local catalog banner failed: {e}")
-                            bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
+                            bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb, parse_mode='HTML')
                     else:
-                        bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
+                        bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb, parse_mode='HTML')
                 else:
-                    bot.send_message(user_id, caption, reply_markup=kb)
+                    bot.send_message(user_id, caption, reply_markup=kb, parse_mode='HTML')
             except Exception as e:
                 log_warning("catalog_handlers", f"send catalog banner failed, fallback to text: {e}")
-                bot.send_message(user_id, caption, reply_markup=kb)
+                bot.send_message(user_id, caption, reply_markup=kb, parse_mode='HTML')
         else:
             # Send new message
             try:
@@ -82,17 +82,17 @@ def register_handlers(bot):
                     if local_path:
                         try:
                             with open(local_path, "rb") as photo:
-                                bot.send_photo(user_id, photo, caption=caption, reply_markup=kb)
+                                bot.send_photo(user_id, photo, caption=caption, reply_markup=kb, parse_mode='HTML')
                         except Exception as e:
                             log_warning("catalog_handlers", f"send_photo local catalog banner (no-edit) failed: {e}")
-                            bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
+                            bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb, parse_mode='HTML')
                     else:
-                        bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb)
+                        bot.send_photo(user_id, banner_url, caption=caption, reply_markup=kb, parse_mode='HTML')
                 else:
-                    bot.send_message(user_id, caption, reply_markup=kb)
+                    bot.send_message(user_id, caption, reply_markup=kb, parse_mode='HTML')
             except Exception as e:
                 log_warning("catalog_handlers", f"send catalog banner (no-edit) failed, fallback to text: {e}")
-                bot.send_message(user_id, caption, reply_markup=kb)
+                bot.send_message(user_id, caption, reply_markup=kb, parse_mode='HTML')
 
     @bot.message_handler(func=lambda m: m.text == "Каталог")
     def handle_catalog(message: types.Message):
@@ -121,11 +121,11 @@ def register_handlers(bot):
         image_url = course.get("image_url", "")
         channel_id = course.get("channel", "")
 
-        # Strip all HTML from course name - display as plain text only
-        formatted_name = strip_html(name) if name else "Курс"
+        # Format course name with HTML support (bold, newlines)
+        formatted_name = format_for_telegram_html(name) if name else "Курс"
 
         if has_active_subscription(user_id, str(course_id)):
-            clean_desc = strip_html(desc) if desc else ""
+            clean_desc = format_for_telegram_html(desc) if desc else ""
             text = f"{formatted_name}\n{clean_desc}\n\n✅ {ALREADY_PURCHASED_MSG}"
             ikb = types.InlineKeyboardMarkup()
             if channel_id:
@@ -144,16 +144,16 @@ def register_handlers(bot):
             ikb.add(types.InlineKeyboardButton("⬅️ Назад к каталогу", callback_data="back_to_catalog"))
             try:
                 if c.message.content_type == "photo":
-                    bot.edit_message_caption(chat_id=c.message.chat.id, message_id=c.message.message_id, caption=text, reply_markup=ikb)
+                    bot.edit_message_caption(chat_id=c.message.chat.id, message_id=c.message.message_id, caption=text, reply_markup=ikb, parse_mode='HTML')
                 else:
-                    bot.edit_message_text(text, chat_id=c.message.chat.id, message_id=c.message.message_id, reply_markup=ikb)
+                    bot.edit_message_text(text, chat_id=c.message.chat.id, message_id=c.message.message_id, reply_markup=ikb, parse_mode='HTML')
             except Exception:
-                bot.send_message(user_id, text, reply_markup=ikb)
+                bot.send_message(user_id, text, reply_markup=ikb, parse_mode='HTML')
             bot.answer_callback_query(c.id)
             return
 
-        # Strip HTML from description too
-        clean_desc = strip_html(desc) if desc else ""
+        # Format description with HTML support (bold, newlines)
+        clean_desc = format_for_telegram_html(desc) if desc else ""
         if duration_days > 0:
             access_text = f"Доступ: {duration_days} дн."
         else:
@@ -175,7 +175,7 @@ def register_handlers(bot):
                         bot.edit_message_media(
                             chat_id=c.message.chat.id,
                             message_id=c.message.message_id,
-                            media=types.InputMediaPhoto(image_url, caption=text),
+                            media=types.InputMediaPhoto(image_url, caption=text, parse_mode='HTML'),
                             reply_markup=ikb
                         )
                         bot.answer_callback_query(c.id)
@@ -192,35 +192,35 @@ def register_handlers(bot):
                 if local_path:
                     try:
                         with open(local_path, "rb") as photo:
-                            bot.send_photo(user_id, photo, caption=text, reply_markup=ikb)
+                            bot.send_photo(user_id, photo, caption=text, reply_markup=ikb, parse_mode='HTML')
                     except Exception as e:
                         log_warning("catalog_handlers", f"send_photo local course image failed: {e}")
-                        bot.send_photo(user_id, image_url, caption=text, reply_markup=ikb)
+                        bot.send_photo(user_id, image_url, caption=text, reply_markup=ikb, parse_mode='HTML')
                 else:
-                    bot.send_photo(user_id, image_url, caption=text, reply_markup=ikb)
+                    bot.send_photo(user_id, image_url, caption=text, reply_markup=ikb, parse_mode='HTML')
                 message_sent = True
             else:
                 # No course image - edit text or send new message
                 if c.message.content_type == "photo":
                     # Original was photo, but course has no image - send text message
-                    bot.send_message(user_id, text, reply_markup=ikb)
+                    bot.send_message(user_id, text, reply_markup=ikb, parse_mode='HTML')
                     message_sent = True
                 else:
                     # Original was text - can edit
                     try:
-                        bot.edit_message_text(text, chat_id=c.message.chat.id, message_id=c.message.message_id, reply_markup=ikb)
+                        bot.edit_message_text(text, chat_id=c.message.chat.id, message_id=c.message.message_id, reply_markup=ikb, parse_mode='HTML')
                         message_sent = True
                     except Exception as e:
                         log_warning("catalog_handlers", f"Failed to edit message text: {e}")
                         # If edit fails, send new message
-                        bot.send_message(user_id, text, reply_markup=ikb)
+                        bot.send_message(user_id, text, reply_markup=ikb, parse_mode='HTML')
                         message_sent = True
             bot.answer_callback_query(c.id)
         except Exception as e:
             # Fallback: send text message if everything else fails (only if we haven't sent anything yet)
             log_error("catalog_handlers", f"Error in course handler: {e}")
             if not message_sent:
-                bot.send_message(user_id, text, reply_markup=ikb)
+                bot.send_message(user_id, text, reply_markup=ikb, parse_mode='HTML')
             bot.answer_callback_query(c.id)
 
     @bot.callback_query_handler(func=lambda c: c.data == "back_to_catalog")
