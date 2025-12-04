@@ -50,17 +50,69 @@ def build_payment_link(
 
 def get_payment_url(payment_link: str) -> Optional[str]:
     """
-    Make GET request to payment link and extract the actual payment URL from redirect.
-    Returns the final payment URL (e.g., https://demo.payform.ru/p/p5z2micwqc9c26/)
+    Make GET request to payment link and extract the short payment URL from response.
+    First tries to extract URL from response body (JSON or text), then falls back to redirect URL.
+    Returns the short payment URL (e.g., https://demo.payform.ru/p/p5z2micwqc9c26/)
     """
     try:
-        # Follow redirects and get final URL
         from utils.logger import log_info
+        import json
+        import re
+        
         log_info_prefix = f"get_payment_url: link={payment_link[:200]}"
-        response = requests.get(payment_link, allow_redirects=True, timeout=10)
+        log_info("prodamus", f"{log_info_prefix} -> making GET request")
+        
+        # Make GET request without following redirects first to check response body
+        response = requests.get(payment_link, allow_redirects=False, timeout=10)
 
         if response.status_code == 200:
-            final_url = response.url
+            # Try to extract URL from JSON response
+            try:
+                json_data = response.json()
+                # Check common JSON fields for URL
+                for key in ['url', 'link', 'payment_url', 'short_url', 'redirect_url']:
+                    if key in json_data and isinstance(json_data[key], str):
+                        url = json_data[key].strip()
+                        if url.startswith('http'):
+                            log_info("prodamus", f"{log_info_prefix} -> found URL in JSON field '{key}': {url[:100]}")
+                            return url
+            except (json.JSONDecodeError, ValueError):
+                pass
+            
+            # Try to extract URL from text response (look for URLs in the response)
+            try:
+                text = response.text
+                # Look for URLs in the response text
+                url_pattern = r'https?://[^\s<>"\'{}|\\^`\[\]]+'
+                urls = re.findall(url_pattern, text)
+                if urls:
+                    # Prefer URLs that look like payment URLs (contain /p/ or similar)
+                    for url in urls:
+                        if '/p/' in url or 'payform' in url.lower() or 'prodamus' in url.lower():
+                            log_info("prodamus", f"{log_info_prefix} -> found URL in text response: {url[:100]}")
+                            return url
+                    # If no payment-like URL found, return first URL
+                    log_info("prodamus", f"{log_info_prefix} -> found URL in text response: {urls[0][:100]}")
+                    return urls[0]
+            except Exception:
+                pass
+        
+        # If status is redirect (3xx), follow it
+        if response.status_code in (301, 302, 303, 307, 308):
+            redirect_url = response.headers.get('Location')
+            if redirect_url:
+                log_info("prodamus", f"{log_info_prefix} -> following redirect to: {redirect_url[:100]}")
+                # Follow redirects to get final URL
+                final_response = requests.get(redirect_url, allow_redirects=True, timeout=10)
+                if final_response.status_code == 200:
+                    return final_response.url
+        
+        # If we got here, try with redirects enabled as fallback
+        log_info("prodamus", f"{log_info_prefix} -> trying with redirects enabled")
+        response_with_redirects = requests.get(payment_link, allow_redirects=True, timeout=10)
+        if response_with_redirects.status_code == 200:
+            final_url = response_with_redirects.url
+            log_info("prodamus", f"{log_info_prefix} -> got final URL from redirect: {final_url[:100]}")
             return final_url
 
         # Non-200 status – log detailed information for diagnostics
