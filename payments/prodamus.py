@@ -5,7 +5,7 @@ import time
 import urllib.parse
 import requests
 from typing import Optional
-from config import PRODAMUS_BASE_URL
+from config import PRODAMUS_BASE_URL, PRODAMUS_SYS
 from utils.logger import log_error, log_warning
 
 
@@ -36,6 +36,7 @@ def build_payment_link(
         'products[0][quantity]': '1',
         'products[0][name]': course_name,
         'do': 'link',
+        'sys': PRODAMUS_SYS,
     }
     
     if customer_extra:
