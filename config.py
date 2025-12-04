@@ -23,6 +23,7 @@ if not TELEGRAM_BOT_TOKEN:
 
 # === PAYMENTS (YooKassa via Telegram Payments) ===
 # Use BotFather-provided provider token linked to YooKassa shop.
+ENABLE_YOOKASSA = get_bool_env("ENABLE_YOOKASSA", True)
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN")
 if not PAYMENT_PROVIDER_TOKEN:
     raise ValueError("PAYMENT_PROVIDER_TOKEN is required. Please set it in .env file")

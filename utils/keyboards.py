@@ -2,7 +2,7 @@
 """Keyboard builders for the bot."""
 
 from telebot import types
-from config import ADMIN_IDS
+from config import ADMIN_IDS, ENABLE_YOOKASSA
 
 
 def get_main_menu_keyboard(user_id: int) -> types.ReplyKeyboardMarkup:
@@ -28,7 +28,12 @@ def get_main_menu_keyboard(user_id: int) -> types.ReplyKeyboardMarkup:
 def create_course_buttons(course_id: str) -> types.InlineKeyboardMarkup:
     """Create payment buttons for a course (YooKassa and Prodamus)"""
     ikb = types.InlineKeyboardMarkup()
-    ikb.add(types.InlineKeyboardButton("💳 Оплатить (ЮKassa)", callback_data=f"pay_yk_{course_id}"))
+    
+    # Add YooKassa button only if enabled
+    if ENABLE_YOOKASSA:
+        ikb.add(types.InlineKeyboardButton("💳 Оплатить (ЮKassa)", callback_data=f"pay_yk_{course_id}"))
+    
+    # Always add Prodamus button
     ikb.add(types.InlineKeyboardButton("💳 Оплатить (Prodamus)", callback_data=f"pay_prodamus_{course_id}"))
     
     ikb.add(types.InlineKeyboardButton("⬅️ Назад к каталогу", callback_data="back_to_catalog"))

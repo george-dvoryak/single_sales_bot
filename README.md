@@ -62,6 +62,7 @@ TELEGRAM_BOT_TOKEN=your_bot_token_here
 # Payments (YooKassa)
 PAYMENT_PROVIDER_TOKEN=your_yookassa_token_here
 CURRENCY=RUB
+ENABLE_YOOKASSA=True  # Set to False to disable YooKassa payment button
 
 # Payments (Prodamus) - Optional
 PRODAMUS_SECRET_KEY=your_prodamus_secret_key
@@ -152,6 +153,8 @@ python main.py
 
 ### YooKassa (via Telegram Payments)
 Primary payment method using Telegram's native payment interface. Requires a provider token from BotFather linked to your YooKassa account.
+
+**Note:** You can disable the YooKassa payment button by setting `ENABLE_YOOKASSA=False` in your `.env` file. When disabled, only the Prodamus payment option will be shown to users.
 
 ### Prodamus
 Alternative payment gateway for external payments. Requires:
