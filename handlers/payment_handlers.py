@@ -2,6 +2,7 @@
 """Payment processing handlers."""
 
 import time
+import re
 from telebot import types
 from google_sheets import get_courses_data
 from db import (
@@ -14,7 +15,7 @@ from payments.prodamus import generate_order_num, build_payment_link, get_paymen
 from utils.text_utils import strip_html
 from utils.text_loader import get_text
 from utils.logger import log_info, log_error, log_warning
-from config import ADMIN_IDS, CURRENCY, PRODAMUS_FIXED_EMAIL
+from config import ADMIN_IDS, CURRENCY
 
 
 COURSE_NOT_AVAILABLE_MSG = get_text("course_not_available_message", "Извините, курс сейчас недоступен.")
@@ -219,7 +220,7 @@ def register_handlers(bot):
     # Prodamus payment handlers
     @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_prodamus_"))
     def cb_pay_prodamus(c: types.CallbackQuery):
-        """Handle Prodamus payment button click"""
+        """Handle Prodamus payment button click (ask for email, then create link)"""
         user_id = c.from_user.id
         course_id = c.data.split("_", 2)[2]
         
@@ -239,9 +240,32 @@ def register_handlers(bot):
             return
         
         bot.answer_callback_query(c.id)
-        create_prodamus_payment_link(bot, user_id, course_id, course)
 
-    def create_prodamus_payment_link(bot, user_id: int, course_id: str, course: dict):
+        # Ask user for email (single attempt)
+        prompt_text = (
+            "Для оплаты через Prodamus укажите, пожалуйста, ваш email.\n\n"
+            "Email будет использован для отправки чека."
+        )
+        msg = bot.send_message(user_id, prompt_text)
+
+        email_pattern = r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+
+        def _handle_prodamus_email(message: types.Message, course=course, course_id_inner=course_id):
+            entered_email = (message.text or "").strip()
+
+            # Validate email format (single attempt – no re-asking)
+            if not re.match(email_pattern, entered_email):
+                bot.send_message(
+                    message.chat.id,
+                    "❌ Неверный формат email. Попробуйте начать оплату через Prodamus ещё раз из каталога."
+                )
+                return
+
+            create_prodamus_payment_link(bot, message.from_user.id, course_id_inner, course, entered_email)
+
+        bot.register_next_step_handler(msg, _handle_prodamus_email)
+
+    def create_prodamus_payment_link(bot, user_id: int, course_id: str, course: dict, customer_email: str):
         """Create Prodamus payment link and send it to user"""
         course_name = course.get("name", "Курс")
         price = float(course.get("price", 0))
@@ -279,7 +303,7 @@ def register_handlers(bot):
                     f"Creating Prodamus payment: user_id={user_id}, course_id={course_id}, "
                     f"order_id={order_id}, order_num={order_num}, attempt={attempt + 1}"
                 )
-                if create_prodamus_payment(order_id, user_id, course_id, PRODAMUS_FIXED_EMAIL, order_num):
+                if create_prodamus_payment(order_id, user_id, course_id, customer_email, order_num):
                     payment_created = True
                     break
                 if attempt < 2:
@@ -314,6 +338,7 @@ def register_handlers(bot):
                 payment_link = build_payment_link(
                     order_id=order_id,
                     order_num=order_num,
+                    customer_email=customer_email,
                     course_name=clean_course_name,
                     price=price,
                     customer_extra=customer_extra

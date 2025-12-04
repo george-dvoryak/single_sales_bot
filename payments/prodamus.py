@@ -5,7 +5,7 @@ import time
 import urllib.parse
 import requests
 from typing import Optional
-from config import PRODAMUS_BASE_URL, PRODAMUS_FIXED_EMAIL
+from config import PRODAMUS_BASE_URL
 from utils.logger import log_error, log_warning
 
 
@@ -22,13 +22,13 @@ def generate_order_num(user_id: int, course_id: str) -> str:
 def build_payment_link(
     order_id: str,
     order_num: str,
+    customer_email: str,
     course_name: str,
     price: float,
     customer_extra: str = ""
 ) -> str:
     """
     Build Prodamus payment link with all required parameters.
-    Uses fixed email from config (PRODAMUS_FIXED_EMAIL).
     """
     base_url = PRODAMUS_BASE_URL.rstrip('/')
     
@@ -36,7 +36,7 @@ def build_payment_link(
         # Prodamus will echo order_num back in webhook, we use it as main identifier
         'order_id': order_id,
         'order_num': order_num,
-        'customer_email': PRODAMUS_FIXED_EMAIL,
+        'customer_email': customer_email,
         'products[0][price]': str(price),
         'products[0][quantity]': '1',
         'products[0][name]': course_name,
