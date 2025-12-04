@@ -103,8 +103,54 @@ def grant_access_and_send_invite(
         log_error("payments_common", f"Error notifying admins: {e}")
 
 
+# In-memory state: track users waiting for Prodamus email input
+# Format: {user_id: {"course_id": str, "course": dict}}
+_prodamus_email_pending: dict[int, dict] = {}
+
+
 def register_handlers(bot):
     """Register payment handlers"""
+    
+    # Register email handler FIRST with high priority to catch email input before other handlers
+    # This must be registered before other text handlers to avoid conflicts
+    @bot.message_handler(
+        func=lambda m: (
+            m.from_user and 
+            m.text and
+            not m.text.startswith('/') and
+            m.from_user.id in _prodamus_email_pending and
+            # Exclude menu items that should be handled by other handlers
+            m.text not in ["Каталог", "Активные подписки", "Поддержка", "Оферта", "📊 Все подписки", "📋 Google Sheets"]
+        ),
+        content_types=['text']
+    )
+    def handle_prodamus_email_input(message: types.Message):
+        """Handle email input for Prodamus payment - single attempt"""
+        user_id = message.from_user.id
+        
+        # Check if user is waiting for email (double-check after filter)
+        if user_id not in _prodamus_email_pending:
+            return  # Not waiting for email, let other handlers process
+        
+        log_info("payment_handlers", f"Processing Prodamus email input for user {user_id}")
+        pending_data = _prodamus_email_pending.pop(user_id)  # Remove from pending immediately
+        course_id = pending_data["course_id"]
+        course = pending_data["course"]
+        entered_email = message.text.strip()
+        
+        # Validate email format (single attempt)
+        email_pattern = r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+        if not re.match(email_pattern, entered_email):
+            log_warning("payment_handlers", f"Invalid email format from user {user_id}: {entered_email}")
+            bot.send_message(
+                user_id,
+                "❌ Неверный формат email. Попробуйте начать оплату через Prodamus ещё раз из каталога."
+            )
+            return
+        
+        # Valid email - proceed with payment link creation
+        log_info("payment_handlers", f"Valid email received from user {user_id}, creating payment link for course {course_id}")
+        create_prodamus_payment_link(bot, user_id, course_id, course, entered_email)
     
     @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_yk_"))
     def cb_pay_yk(c: types.CallbackQuery):
@@ -241,29 +287,19 @@ def register_handlers(bot):
         
         bot.answer_callback_query(c.id)
 
+        # Store pending email request in state (this allows the email handler to catch the next message)
+        _prodamus_email_pending[user_id] = {
+            "course_id": course_id,
+            "course": course
+        }
+        log_info("payment_handlers", f"User {user_id} waiting for email input for course {course_id}")
+        
         # Ask user for email (single attempt)
         prompt_text = (
             "Для оплаты через Prodamus укажите, пожалуйста, ваш email.\n\n"
             "Email будет использован для отправки чека."
         )
-        msg = bot.send_message(user_id, prompt_text)
-
-        email_pattern = r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
-
-        def _handle_prodamus_email(message: types.Message, course=course, course_id_inner=course_id):
-            entered_email = (message.text or "").strip()
-
-            # Validate email format (single attempt – no re-asking)
-            if not re.match(email_pattern, entered_email):
-                bot.send_message(
-                    message.chat.id,
-                    "❌ Неверный формат email. Попробуйте начать оплату через Prodamus ещё раз из каталога."
-                )
-                return
-
-            create_prodamus_payment_link(bot, message.from_user.id, course_id_inner, course, entered_email)
-
-        bot.register_next_step_handler(msg, _handle_prodamus_email)
+        bot.send_message(user_id, prompt_text)
 
     def create_prodamus_payment_link(bot, user_id: int, course_id: str, course: dict, customer_email: str):
         """Create Prodamus payment link and send it to user"""
