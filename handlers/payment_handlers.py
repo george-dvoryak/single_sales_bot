@@ -7,7 +7,8 @@ from telebot import types
 from google_sheets import get_courses_data
 from db import (
     has_active_subscription, add_purchase, add_user,
-    create_prodamus_payment, update_prodamus_payment_url
+    create_prodamus_payment, update_prodamus_payment_url,
+    get_user_email, set_user_email, get_user
 )
 from payments.yookassa import create_invoice, send_receipt_to_tax
 from payments.prodamus import generate_order_num, build_payment_link, get_payment_url
@@ -15,7 +16,6 @@ from utils.text_utils import strip_html
 from utils.text_loader import get_text
 from utils.logger import log_info, log_error, log_warning
 from config import ADMIN_IDS, CURRENCY
-from handlers.state import prodamus_awaiting_email
 
 
 COURSE_NOT_AVAILABLE_MSG = get_text("course_not_available_message", "Извините, курс сейчас недоступен.")
@@ -103,15 +103,18 @@ def grant_access_and_send_invite(
         log_error("payments_common", f"Error notifying admins: {e}")
 
 
+# Temporary state for email collection: user_id -> course_id
+_prodamus_email_collection: dict[int, str] = {}
+
+
 def register_handlers(bot):
     """Register payment handlers"""
     
-    # High-priority handler for Prodamus email input (must be registered first)
-    # Exclude commands and menu buttons - only process plain text messages
+    # Handler for Prodamus email input
     @bot.message_handler(
         func=lambda m: (
             m.from_user and 
-            m.from_user.id in prodamus_awaiting_email and
+            m.from_user.id in _prodamus_email_collection and
             m.text and
             not m.text.startswith('/') and
             m.text not in ["Каталог", "Активные подписки", "Поддержка", "Оферта", "📊 Все подписки", "📋 Google Sheets"]
@@ -119,13 +122,34 @@ def register_handlers(bot):
         content_types=['text']
     )
     def handle_prodamus_email_input(message: types.Message):
-        """Handle email input for Prodamus payment - high priority handler"""
+        """Handle email input for Prodamus payment"""
         user_id = message.from_user.id
-        if user_id not in prodamus_awaiting_email:
-            return  # Should not happen, but safety check
+        if user_id not in _prodamus_email_collection:
+            return
         
-        course_id = prodamus_awaiting_email[user_id]
-        handle_prodamus_email(bot, message, course_id)
+        course_id = _prodamus_email_collection[user_id]
+        email = message.text.strip()
+        
+        # Validate email format
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, email):
+            text = "❌ Неверный формат email адреса. Пожалуйста, отправьте корректный email:"
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
+            bot.send_message(user_id, text, reply_markup=kb)
+            return
+        
+        # Save email to database
+        if not set_user_email(user_id, email):
+            bot.send_message(user_id, "❌ Ошибка при сохранении email. Попробуйте еще раз.")
+            return
+        
+        # Clear temporary state
+        _prodamus_email_collection.pop(user_id, None)
+        log_info("payment_handlers", f"User {user_id} email saved, proceeding with payment for course {course_id}")
+        
+        # Proceed with payment link creation
+        create_prodamus_payment_link(bot, user_id, course_id, email)
     
     @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_yk_"))
     def cb_pay_yk(c: types.CallbackQuery):
@@ -241,7 +265,7 @@ def register_handlers(bot):
     # Prodamus payment handlers
     @bot.callback_query_handler(func=lambda c: c.data.startswith("pay_prodamus_"))
     def cb_pay_prodamus(c: types.CallbackQuery):
-        """Handle Prodamus payment button click - ask for email"""
+        """Handle Prodamus payment button click - check for email and proceed"""
         user_id = c.from_user.id
         course_id = c.data.split("_", 2)[2]
         
@@ -262,55 +286,24 @@ def register_handlers(bot):
         
         bot.answer_callback_query(c.id)
         
-        # Set state: user is now awaiting email input
-        prodamus_awaiting_email[user_id] = course_id
-        log_info("payment_handlers", f"User {user_id} awaiting email for course {course_id}")
+        # Check if user has email in database
+        email = get_user_email(user_id)
         
-        # Ask for email
-        text = "Для оплаты через Prodamus необходимо указать ваш email адрес.\n\nПожалуйста, отправьте ваш email:"
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
-        bot.send_message(user_id, text, reply_markup=kb)
+        if email:
+            # User has email, proceed directly to payment link creation
+            log_info("payment_handlers", f"User {user_id} has email in DB, proceeding with payment for course {course_id}")
+            create_prodamus_payment_link(bot, user_id, course_id, email)
+        else:
+            # Ask for email
+            _prodamus_email_collection[user_id] = course_id
+            log_info("payment_handlers", f"User {user_id} needs to provide email for course {course_id}")
+            text = "Для оплаты через Prodamus необходимо указать ваш email адрес.\n\nПожалуйста, отправьте ваш email:"
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
+            bot.send_message(user_id, text, reply_markup=kb)
 
-    def handle_prodamus_email(bot, message: types.Message, course_id: str):
-        """Handle email input for Prodamus payment"""
-        user_id = message.from_user.id
-        
-        try:
-            # Check if message has text content
-            if not message.text or not message.text.strip():
-                # Invalid input, stay in awaiting email state
-                text = "❌ Неверный формат email адреса. Пожалуйста, отправьте корректный email:"
-                kb = types.InlineKeyboardMarkup()
-                kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
-                bot.send_message(user_id, text, reply_markup=kb)
-                # State remains set, handler will catch next message
-                return
-            
-            email = message.text.strip()
-            
-            # Validate email format
-            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-            if not re.match(email_pattern, email):
-                text = "❌ Неверный формат email адреса. Пожалуйста, отправьте корректный email:"
-                kb = types.InlineKeyboardMarkup()
-                kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"course_{course_id}"))
-                bot.send_message(user_id, text, reply_markup=kb)
-                # State remains set, handler will catch next message
-                return
-        except Exception as e:
-            log_error("payment_handlers", f"Error validating email for user {user_id}: {e}", exc_info=True)
-            # Try to send error message
-            try:
-                bot.send_message(user_id, "❌ Произошла ошибка при обработке email. Попробуйте еще раз.")
-            except Exception:
-                pass
-            return
-        
-        # Email is valid - clear the awaiting state
-        prodamus_awaiting_email.pop(user_id, None)
-        log_info("payment_handlers", f"User {user_id} provided valid email, proceeding with payment")
-        
+    def create_prodamus_payment_link(bot, user_id: int, course_id: str, email: str):
+        """Create Prodamus payment link and send it to user"""
         try:
             courses = get_courses_data()
         except Exception as e:
@@ -327,10 +320,10 @@ def register_handlers(bot):
         course_name = course.get("name", "Курс")
         price = float(course.get("price", 0))
         
-        # Generate order_num in format userId_courseId_timestamp and use it as our main identifier
+        # Generate order_num in format userId_courseId_timestamp
         order_num = generate_order_num(user_id, course_id)
-        order_id = order_num  # store the same value in order_id column for simplicity
-
+        order_id = order_num
+        
         # Try to create payment record; retry once on OperationalError (DB locked)
         payment_created = False
         for attempt in range(2):
@@ -338,7 +331,6 @@ def register_handlers(bot):
                 payment_created = True
                 break
             if attempt == 0:
-                # First attempt failed, wait a bit and retry
                 time.sleep(0.2)
                 log_info("payment_handlers", f"Retrying payment creation for user {user_id}, order_id={order_id}")
         
@@ -348,9 +340,13 @@ def register_handlers(bot):
             return
         
         try:
+            # Get username from database
+            user_info = get_user(user_id)
+            username = user_info["username"] if user_info and user_info.get("username") else "user"
+            
             # Build payment link
-            customer_phone = ""  # Optional, can be empty
-            customer_extra = f"Покупка курса через Telegram бот (tg:@{message.from_user.username or 'user'})"
+            customer_phone = ""
+            customer_extra = f"Покупка курса через Telegram бот (tg:@{username})"
             clean_course_name = strip_html(course_name)
             
             payment_link = build_payment_link(
@@ -377,7 +373,6 @@ def register_handlers(bot):
                 update_prodamus_payment_url(order_id, payment_url)
             except Exception as e:
                 log_error("payment_handlers", f"Error updating payment URL in DB for user {user_id}, order_id={order_id}: {e}")
-                # Continue anyway - the payment URL is still valid
             
             # Send payment link to user
             text = f"💳 Ссылка на оплату курса \"{clean_course_name}\":\n\n{payment_url}\n\nПосле успешной оплаты доступ к курсу будет предоставлен автоматически."

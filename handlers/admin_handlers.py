@@ -12,9 +12,6 @@ from google_sheets import get_courses_data
 from utils.logger import log_error, log_warning, log_info
 from config import ADMIN_IDS, DATABASE_PATH, GSHEET_ID
 
-# Import shared state management
-from handlers.state import prodamus_awaiting_email
-
 
 def register_handlers(bot):
     """Register admin handlers"""
@@ -23,11 +20,6 @@ def register_handlers(bot):
     def handle_admin_all_subscriptions(message: types.Message):
         """Admin handler: show all active subscriptions for all users"""
         user_id = message.from_user.id
-        # Clear Prodamus email awaiting state if user was in that flow
-        if user_id in prodamus_awaiting_email:
-            prodamus_awaiting_email.pop(user_id, None)
-            log_info("admin_handlers", f"Cleared awaiting email state for user {user_id} (clicked 📊 Все подписки)")
-        
         if user_id not in ADMIN_IDS:
             bot.send_message(user_id, "У вас нет доступа к этой функции.")
             return
@@ -88,11 +80,6 @@ def register_handlers(bot):
     def handle_admin_google_sheets(message: types.Message):
         """Admin handler: open Google Sheets link"""
         user_id = message.from_user.id
-        # Clear Prodamus email awaiting state if user was in that flow
-        if user_id in prodamus_awaiting_email:
-            prodamus_awaiting_email.pop(user_id, None)
-            log_info("admin_handlers", f"Cleared awaiting email state for user {user_id} (clicked 📋 Google Sheets)")
-        
         if user_id not in ADMIN_IDS:
             bot.send_message(user_id, "У вас нет доступа к этой функции.")
             return

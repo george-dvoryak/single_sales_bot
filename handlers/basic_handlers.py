@@ -10,9 +10,6 @@ from utils.images import get_local_image_path
 from utils.text_loader import get_text
 from utils.logger import log_error, log_warning, log_info
 
-# Import shared state management
-from handlers.state import prodamus_awaiting_email
-
 WELCOME_MSG = get_text("welcome_message", "Здравствуйте! Этот бот поможет вам купить курсы по макияжу.\nНиже находится меню.")
 SUPPORT_MSG = get_text("support_message", "Если у вас есть вопросы, напишите нам в поддержку.")
 
@@ -23,11 +20,6 @@ def register_handlers(bot):
     @bot.message_handler(commands=['start'])
     def handle_start(message: types.Message):
         user_id = message.from_user.id
-        # Clear Prodamus email awaiting state if user was in that flow
-        if user_id in prodamus_awaiting_email:
-            prodamus_awaiting_email.pop(user_id, None)
-            log_info("basic_handlers", f"Cleared awaiting email state for user {user_id} (sent /start)")
-        
         username = message.from_user.username or ""
         add_user(user_id, username)
 
@@ -59,10 +51,6 @@ def register_handlers(bot):
     @bot.message_handler(func=lambda m: m.text == "Активные подписки")
     def handle_active(message: types.Message):
         user_id = message.from_user.id
-        # Clear Prodamus email awaiting state if user was in that flow
-        if user_id in prodamus_awaiting_email:
-            prodamus_awaiting_email.pop(user_id, None)
-            log_info("basic_handlers", f"Cleared awaiting email state for user {user_id} (clicked menu)")
         subs = get_active_subscriptions(user_id)
         subs = list(subs) if subs else []
         if not subs:
@@ -86,19 +74,11 @@ def register_handlers(bot):
     @bot.message_handler(func=lambda m: m.text == "Поддержка")
     def handle_support(message: types.Message):
         user_id = message.from_user.id
-        # Clear Prodamus email awaiting state if user was in that flow
-        if user_id in prodamus_awaiting_email:
-            prodamus_awaiting_email.pop(user_id, None)
-            log_info("basic_handlers", f"Cleared awaiting email state for user {user_id} (clicked menu)")
         bot.send_message(user_id, SUPPORT_MSG)
 
     @bot.message_handler(func=lambda m: m.text == "Оферта")
     def handle_oferta(message: types.Message):
         user_id = message.from_user.id
-        # Clear Prodamus email awaiting state if user was in that flow
-        if user_id in prodamus_awaiting_email:
-            prodamus_awaiting_email.pop(user_id, None)
-            log_info("basic_handlers", f"Cleared awaiting email state for user {user_id} (clicked menu)")
         oferta_url = "https://github.com/george-dvoryak/cdn/blob/main/oferta.pdf?raw=true"
         try:
             bot.send_document(user_id, oferta_url, caption="Договор оферты (PDF)")

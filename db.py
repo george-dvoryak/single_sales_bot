@@ -72,6 +72,15 @@ def init_db(conn):
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_email (
+            tg_id INTEGER PRIMARY KEY,
+            email TEXT NOT NULL,
+            FOREIGN KEY(tg_id) REFERENCES users(user_id)
+        )
+        """
+    )
     conn.commit()
 
 def add_user(user_id: int, username: str = None):
@@ -378,3 +387,45 @@ def get_prodamus_payment_by_order_num(order_num: str):
         (order_num,)
     )
     return cur.fetchone()
+
+
+def get_user_email(user_id: int) -> str | None:
+    """
+    Get user email from database.
+    
+    Args:
+        user_id: Telegram user ID
+        
+    Returns:
+        str or None: Email address if found, None otherwise
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT email FROM user_email WHERE tg_id = ?;", (user_id,))
+    row = cur.fetchone()
+    return row["email"] if row else None
+
+
+def set_user_email(user_id: int, email: str) -> bool:
+    """
+    Set or update user email in database.
+    
+    Args:
+        user_id: Telegram user ID
+        email: Email address
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO user_email (tg_id, email) VALUES (?, ?) ON CONFLICT(tg_id) DO UPDATE SET email = ?;",
+            (user_id, email, email)
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        log_error("db", f"Error setting user email: {e}")
+        return False
