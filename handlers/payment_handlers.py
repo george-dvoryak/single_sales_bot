@@ -255,7 +255,7 @@ def register_handlers(bot):
             (user_id, course_id)
         )
         existing_payment = cur.fetchone()
-        
+
         if existing_payment and existing_payment["payment_url"]:
             # Reuse existing payment with URL
             order_id = existing_payment["order_id"]
@@ -269,6 +269,11 @@ def register_handlers(bot):
             
             payment_created = False
             for attempt in range(3):
+                log_info(
+                    "payment_handlers",
+                    f"Creating Prodamus payment: user_id={user_id}, course_id={course_id}, "
+                    f"order_id={order_id}, order_num={order_num}, attempt={attempt + 1}"
+                )
                 if create_prodamus_payment(order_id, user_id, course_id, PRODAMUS_FIXED_EMAIL, order_num):
                     payment_created = True
                     break
@@ -280,7 +285,11 @@ def register_handlers(bot):
                     log_info("payment_handlers", f"Retrying payment creation for user {user_id}, attempt {attempt + 2}, order_id={order_id}")
             
             if not payment_created:
-                log_error("payment_handlers", f"Failed to create Prodamus payment after retries: user_id={user_id}, course_id={course_id}")
+                log_error(
+                    "payment_handlers",
+                    f"Failed to create Prodamus payment after retries: "
+                    f"user_id={user_id}, course_id={course_id}, last_order_id={order_id}, last_order_num={order_num}"
+                )
                 bot.send_message(user_id, "❌ Ошибка: не удалось создать заказ. Попробуйте позже.")
                 return
             
@@ -300,7 +309,6 @@ def register_handlers(bot):
                 payment_link = build_payment_link(
                     order_id=order_id,
                     order_num=order_num,
-                    customer_phone="",
                     course_name=clean_course_name,
                     price=price,
                     customer_extra=customer_extra
@@ -308,10 +316,19 @@ def register_handlers(bot):
                 
                 # Get actual payment URL
                 bot.send_message(user_id, "⏳ Создаю ссылку на оплату...")
+                log_info(
+                    "payment_handlers",
+                    f"Requesting Prodamus payment URL: user_id={user_id}, course_id={course_id}, "
+                    f"order_id={order_id}, order_num={order_num}, link={payment_link[:200]}"
+                )
                 payment_url = get_payment_url(payment_link)
                 
                 if not payment_url:
-                    log_error("payment_handlers", f"Failed to get payment URL for user {user_id}, order_id={order_id}")
+                    log_error(
+                        "payment_handlers",
+                        f"Failed to get Prodamus payment URL: user_id={user_id}, course_id={course_id}, "
+                        f"order_id={order_id}, order_num={order_num}, link={payment_link[:200]}"
+                    )
                     bot.send_message(user_id, "❌ Ошибка при создании ссылки на оплату. Попробуйте позже.")
                     return
                 
@@ -319,7 +336,12 @@ def register_handlers(bot):
                 try:
                     update_prodamus_payment_url(order_id, payment_url)
                 except Exception as e:
-                    log_error("payment_handlers", f"Error updating payment URL in DB for user {user_id}, order_id={order_id}: {e}")
+                    log_error(
+                        "payment_handlers",
+                        f"Error updating Prodamus payment URL in DB: user_id={user_id}, course_id={course_id}, "
+                        f"order_id={order_id}, order_num={order_num}, payment_url={payment_url}: {e}",
+                        exc_info=True,
+                    )
             
             # Send payment link to user
             text = f"💳 Ссылка на оплату курса \"{clean_course_name}\":\n\n{payment_url}\n\nПосле успешной оплаты доступ к курсу будет предоставлен автоматически."
