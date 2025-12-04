@@ -246,56 +246,80 @@ def register_handlers(bot):
         course_name = course.get("name", "Курс")
         price = float(course.get("price", 0))
         
-        # Create payment record
-        order_num = generate_order_num(user_id, course_id)
-        order_id = order_num
+        # Check for existing pending payment first
+        from db import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT order_id, order_num, payment_url FROM prodamus_payments WHERE user_id = ? AND course_id = ? AND payment_status = 'pending' ORDER BY created_at DESC LIMIT 1;",
+            (user_id, course_id)
+        )
+        existing_payment = cur.fetchone()
         
-        payment_created = False
-        for attempt in range(2):
-            if create_prodamus_payment(order_id, user_id, course_id, PRODAMUS_FIXED_EMAIL, order_num):
-                payment_created = True
-                break
-            if attempt == 0:
-                time.sleep(0.2)
-                log_info("payment_handlers", f"Retrying payment creation for user {user_id}, order_id={order_id}")
-        
-        if not payment_created:
-            log_error("payment_handlers", f"Failed to create Prodamus payment after retries: user_id={user_id}, order_id={order_id}, course_id={course_id}")
-            bot.send_message(user_id, "❌ Ошибка: не удалось создать заказ. Попробуйте позже.")
-            return
+        if existing_payment and existing_payment["payment_url"]:
+            # Reuse existing payment with URL
+            order_id = existing_payment["order_id"]
+            order_num = existing_payment["order_num"]
+            payment_url = existing_payment["payment_url"]
+            log_info("payment_handlers", f"Reusing existing payment for user {user_id}, course {course_id}, order_id={order_id}")
+        else:
+            # Create new payment record
+            order_num = generate_order_num(user_id, course_id)
+            order_id = order_num
+            
+            payment_created = False
+            for attempt in range(3):
+                if create_prodamus_payment(order_id, user_id, course_id, PRODAMUS_FIXED_EMAIL, order_num):
+                    payment_created = True
+                    break
+                if attempt < 2:
+                    # Generate new order_id for retry (with new timestamp)
+                    order_num = generate_order_num(user_id, course_id)
+                    order_id = order_num
+                    time.sleep(0.3)
+                    log_info("payment_handlers", f"Retrying payment creation for user {user_id}, attempt {attempt + 2}, order_id={order_id}")
+            
+            if not payment_created:
+                log_error("payment_handlers", f"Failed to create Prodamus payment after retries: user_id={user_id}, course_id={course_id}")
+                bot.send_message(user_id, "❌ Ошибка: не удалось создать заказ. Попробуйте позже.")
+                return
+            
+            payment_url = None
         
         try:
             # Get username from database
             user_info = get_user(user_id)
             username = user_info.get("username", "user") if user_info else "user"
-            
-            # Build payment link
-            customer_extra = f"Покупка курса через Telegram бот (tg:@{username})"
             clean_course_name = strip_html(course_name)
             
-            payment_link = build_payment_link(
-                order_id=order_id,
-                order_num=order_num,
-                customer_phone="",
-                course_name=clean_course_name,
-                price=price,
-                customer_extra=customer_extra
-            )
-            
-            # Get actual payment URL
-            bot.send_message(user_id, "⏳ Создаю ссылку на оплату...")
-            payment_url = get_payment_url(payment_link)
-            
+            # If we don't have a payment URL yet, create it
             if not payment_url:
-                log_error("payment_handlers", f"Failed to get payment URL for user {user_id}, order_id={order_id}")
-                bot.send_message(user_id, "❌ Ошибка при создании ссылки на оплату. Попробуйте позже.")
-                return
-            
-            # Update payment URL in database
-            try:
-                update_prodamus_payment_url(order_id, payment_url)
-            except Exception as e:
-                log_error("payment_handlers", f"Error updating payment URL in DB for user {user_id}, order_id={order_id}: {e}")
+                # Build payment link
+                customer_extra = f"Покупка курса через Telegram бот (tg:@{username})"
+                
+                payment_link = build_payment_link(
+                    order_id=order_id,
+                    order_num=order_num,
+                    customer_phone="",
+                    course_name=clean_course_name,
+                    price=price,
+                    customer_extra=customer_extra
+                )
+                
+                # Get actual payment URL
+                bot.send_message(user_id, "⏳ Создаю ссылку на оплату...")
+                payment_url = get_payment_url(payment_link)
+                
+                if not payment_url:
+                    log_error("payment_handlers", f"Failed to get payment URL for user {user_id}, order_id={order_id}")
+                    bot.send_message(user_id, "❌ Ошибка при создании ссылки на оплату. Попробуйте позже.")
+                    return
+                
+                # Update payment URL in database
+                try:
+                    update_prodamus_payment_url(order_id, payment_url)
+                except Exception as e:
+                    log_error("payment_handlers", f"Error updating payment URL in DB for user {user_id}, order_id={order_id}: {e}")
             
             # Send payment link to user
             text = f"💳 Ссылка на оплату курса \"{clean_course_name}\":\n\n{payment_url}\n\nПосле успешной оплаты доступ к курсу будет предоставлен автоматически."

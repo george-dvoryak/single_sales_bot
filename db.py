@@ -284,13 +284,17 @@ def create_prodamus_payment(order_id: str, user_id: int, course_id: str, custome
         )
         conn.commit()
         return True
-    except sqlite3.IntegrityError:
+    except sqlite3.IntegrityError as e:
         # Order ID already exists
+        log_warning("db", f"create_prodamus_payment IntegrityError: order_id={order_id} already exists: {e}")
         return False
     except sqlite3.OperationalError as e:
         # Database is locked or other operational issue – let caller retry or fail gracefully
         log_warning("db", f"create_prodamus_payment OperationalError: {e}")
         time.sleep(0.1)
+        return False
+    except Exception as e:
+        log_error("db", f"create_prodamus_payment unexpected error: {e}", exc_info=True)
         return False
 
 
