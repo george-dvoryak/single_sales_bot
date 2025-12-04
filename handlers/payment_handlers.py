@@ -298,7 +298,10 @@ def register_handlers(bot):
         try:
             # Get username from database
             user_info = get_user(user_id)
-            username = user_info.get("username", "user") if user_info else "user"
+            if user_info and "username" in user_info.keys() and user_info["username"]:
+                username = user_info["username"]
+            else:
+                username = "user"
             clean_course_name = strip_html(course_name)
             
             # If we don't have a payment URL yet, create it
