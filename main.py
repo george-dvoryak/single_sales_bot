@@ -87,36 +87,89 @@ def _health():
 
 @application.get("/diag")
 def _diag():
-    """Lightweight diagnostics endpoint"""
+    """Lightweight diagnostics endpoint (requires authentication)"""
+    # Require authentication
+    if not _require_auth():
+        return "Unauthorized", 401
+    
     try:
         report = check_course_channels(bot, get_courses_data)
     except Exception as e:
-        report = f"diag error: {e}"
+        log_error("diag", f"Diagnostics error: {e}", exc_info=True)
+        report = f"diag error: {str(e)}"
     return report, 200
+
+
+def _sanitize_url(url: str) -> str:
+    """Sanitize URL to hide sensitive tokens while preserving useful info"""
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(url)
+        # Hide path if it looks like it contains a token (long path segment)
+        if parsed.path and len(parsed.path) > 20:
+            # Replace path with masked version
+            path_parts = parsed.path.split('/')
+            sanitized_parts = []
+            for part in path_parts:
+                if len(part) > 20:  # Likely a token
+                    sanitized_parts.append(f"{part[:4]}...{part[-4:]}" if len(part) > 8 else "***")
+                else:
+                    sanitized_parts.append(part)
+            sanitized_path = '/'.join(sanitized_parts)
+            return urlunparse((parsed.scheme, parsed.netloc, sanitized_path, parsed.params, parsed.query, parsed.fragment))
+        return url
+    except Exception:
+        # If parsing fails, return masked version
+        if len(url) > 50:
+            return f"{url[:20]}...{url[-10:]}"
+        return "***"
+
+
+def _require_auth():
+    """Check if request has valid authentication token"""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return False
+    token = auth_header.replace("Bearer ", "").strip()
+    # Use WEBHOOK_SECRET_TOKEN as auth token for diagnostic endpoints
+    return token == WEBHOOK_SECRET_TOKEN if WEBHOOK_SECRET_TOKEN else False
 
 
 @application.get("/webhook_info")
 def _webhook_info():
-    """Check webhook status and configuration"""
+    """Check webhook status and configuration (requires authentication)"""
+    # Require authentication
+    if not _require_auth():
+        return "Unauthorized", 401
+    
     try:
         import json
         webhook_info = bot.get_webhook_info()
+        
+        # Sanitize URLs to hide sensitive tokens
+        sanitized_webhook_url = _sanitize_url(webhook_info.url) if webhook_info.url else None
+        sanitized_config_url = _sanitize_url(WEBHOOK_URL) if WEBHOOK_URL else None
+        sanitized_route = _sanitize_url(webhook_route) if webhook_route else None
+        
         info = {
-            "webhook_url": webhook_info.url,
+            "webhook_url": sanitized_webhook_url,
             "has_custom_certificate": webhook_info.has_custom_certificate,
             "pending_update_count": webhook_info.pending_update_count,
             "last_error_date": webhook_info.last_error_date,
             "last_error_message": webhook_info.last_error_message,
             "max_connections": webhook_info.max_connections,
             "allowed_updates": webhook_info.allowed_updates,
-            "configured_route": webhook_route,
-            "webhook_url_config": WEBHOOK_URL,
+            "configured_route": sanitized_route,
+            "webhook_url_config": sanitized_config_url,
             "use_webhook": USE_WEBHOOK,
         }
         return f"Webhook Info:\n{json.dumps(info, indent=2, default=str)}", 200
     except Exception as e:
         log_error("webhook_info", f"Error getting webhook info: {e}", exc_info=True)
-        return f"Error getting webhook info: {e}\n{traceback.format_exc()}", 500
+        # Don't expose stack trace to client
+        return f"Error getting webhook info: {str(e)}", 500
 
 
 # Webhook endpoint - use WEBHOOK_PATH if set, otherwise use default path
@@ -143,7 +196,22 @@ def _webhook():
                 return "ERROR: No data", 400
             
             json_str = raw_data.decode("utf-8")
-            log_info("webhook", f"Received data: {json_str[:200]}...")
+            # Log only update_id and message type, not full data (may contain sensitive info)
+            try:
+                import json
+                data = json.loads(json_str)
+                update_id = data.get("update_id", "unknown")
+                msg_type = "unknown"
+                if "message" in data:
+                    msg_type = "message"
+                elif "callback_query" in data:
+                    msg_type = "callback_query"
+                elif "pre_checkout_query" in data:
+                    msg_type = "pre_checkout_query"
+                log_info("webhook", f"Received update: update_id={update_id}, type={msg_type}")
+            except Exception:
+                # If parsing fails, log minimal info
+                log_info("webhook", f"Received data: {len(json_str)} bytes")
             
             # Parse and process update
             update = telebot.types.Update.de_json(json_str)
