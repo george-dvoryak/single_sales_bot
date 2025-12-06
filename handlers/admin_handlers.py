@@ -13,6 +13,126 @@ from utils.logger import log_error, log_warning, log_info
 from config import ADMIN_IDS, DATABASE_PATH, GSHEET_ID
 
 
+def cleanup_expired_subscriptions(bot, notify_admins: bool = True):
+    """
+    Clean up expired subscriptions by removing users from channels.
+    
+    Args:
+        bot: Telegram bot instance
+        notify_admins: If True, send notification to admins about the cleanup results
+        
+    Returns:
+        dict: Statistics about the cleanup process with keys:
+            - expired_count: Number of expired subscriptions found
+            - active_count: Number of active subscriptions
+            - processed: Number of subscriptions successfully processed
+            - failed: Number of subscriptions that failed to process
+            - success: Boolean indicating if cleanup completed without errors
+    """
+    result = {
+        "expired_count": 0,
+        "active_count": 0,
+        "processed": 0,
+        "failed": 0,
+        "success": False
+    }
+    
+    try:
+        now = int(time.time())
+        
+        conn = get_connection()
+        cur = conn.cursor()
+        
+        cur.execute("SELECT COUNT(*) FROM purchases WHERE expiry > 0 AND expiry <= ?", (now,))
+        expired_count = cur.fetchone()[0]
+        result["expired_count"] = expired_count
+        
+        cur.execute("SELECT COUNT(*) FROM purchases WHERE expiry > ?", (now,))
+        active_count = cur.fetchone()[0]
+        result["active_count"] = active_count
+        
+        if expired_count == 0:
+            result["success"] = True
+            if notify_admins:
+                report = f"📊 Статистика:\n• Просроченных (необработанных): {expired_count}\n• Активных: {active_count}\n\n✅ Просроченных подписок не найдено."
+                for aid in ADMIN_IDS:
+                    try:
+                        bot.send_message(aid, report)
+                    except Exception:
+                        pass
+            return result
+        
+        # Process expired subscriptions
+        expired = get_expired_subscriptions()
+        processed = 0
+        failed = 0
+        
+        for rec in expired:
+            try:
+                user_id = rec["user_id"]
+                course_id = rec["course_id"]
+                course_name = rec["course_name"]
+                channel_id = rec["channel_id"]
+                
+                if channel_id:
+                    ok = remove_user_from_channel(bot, user_id, channel_id)
+                    if not ok:
+                        # Double check
+                        try:
+                            member = bot.get_chat_member(channel_id, user_id)
+                            status = getattr(member, "status", "unknown")
+                            if status in ("left", "kicked"):
+                                ok = True
+                        except:
+                            ok = True  # Assume removed if can't check
+                
+                mark_subscription_expired(user_id, course_id)
+                
+                # Try to notify user
+                try:
+                    clean_course_name = strip_html(course_name) if course_name else "курсу"
+                    bot.send_message(user_id, f"Доступ к курсу {clean_course_name} завершен. Спасибо, что были с нами!")
+                except:
+                    pass
+                
+                processed += 1
+            except Exception as e:
+                failed += 1
+                log_error("admin_handlers", f"Error processing expired subscription: {e}")
+        
+        result["processed"] = processed
+        result["failed"] = failed
+        result["success"] = True
+        
+        if notify_admins:
+            report = f"📊 Статистика:\n"
+            report += f"• Просроченных (необработанных): {expired_count}\n"
+            report += f"• Активных: {active_count}\n\n"
+            report += f"✅ Обработано: {processed}\n"
+            if failed > 0:
+                report += f"⚠️ Ошибок: {failed}"
+            
+            for aid in ADMIN_IDS:
+                try:
+                    bot.send_message(aid, report)
+                except Exception:
+                    pass
+        
+        return result
+        
+    except Exception as e:
+        log_error("admin_handlers", f"Cleanup error: {e}", exc_info=True)
+        result["success"] = False
+        if notify_admins:
+            error_msg = f"❌ Ошибка при очистке: {e}"
+            for aid in ADMIN_IDS:
+                try:
+                    bot.send_message(aid, error_msg)
+                except Exception:
+                    pass
+        return result
+
+
 def register_handlers(bot):
     """Register admin handlers"""
     
@@ -105,74 +225,25 @@ def register_handlers(bot):
         
         bot.reply_to(message, "🔄 Запуск очистки просроченных подписок...")
         
-        try:
-            now = int(time.time())
-            
-            conn = get_connection()
-            cur = conn.cursor()
-            
-            cur.execute("SELECT COUNT(*) FROM purchases WHERE expiry > 0 AND expiry <= ?", (now,))
-            expired_count = cur.fetchone()[0]
-            
-            cur.execute("SELECT COUNT(*) FROM purchases WHERE expiry > ?", (now,))
-            active_count = cur.fetchone()[0]
-            
-            report = f"📊 Статистика:\n"
-            report += f"• Просроченных (необработанных): {expired_count}\n"
-            report += f"• Активных: {active_count}\n\n"
-            
-            if expired_count == 0:
-                bot.reply_to(message, report + "✅ Просроченных подписок не найдено.")
-                return
-            
-            # Process expired subscriptions
-            expired = get_expired_subscriptions()
-            processed = 0
-            failed = 0
-            
-            for rec in expired:
-                try:
-                    user_id = rec["user_id"]
-                    course_id = rec["course_id"]
-                    course_name = rec["course_name"]
-                    channel_id = rec["channel_id"]
-                    
-                    if channel_id:
-                        ok = remove_user_from_channel(bot, user_id, channel_id)
-                        if not ok:
-                            # Double check
-                            try:
-                                member = bot.get_chat_member(channel_id, user_id)
-                                status = getattr(member, "status", "unknown")
-                                if status in ("left", "kicked"):
-                                    ok = True
-                            except:
-                                ok = True  # Assume removed if can't check
-                    
-                    mark_subscription_expired(user_id, course_id)
-                    
-                    # Try to notify user
-                    try:
-                        clean_course_name = strip_html(course_name) if course_name else "курсу"
-                        bot.send_message(user_id, f"Доступ к курсу {clean_course_name} завершен. Спасибо, что были с нами!")
-                    except:
-                        pass
-                    
-                    processed += 1
-                except Exception as e:
-                    failed += 1
-                    log_error("admin_handlers", f"Error processing expired subscription: {e}")
-            
-            report += f"✅ Обработано: {processed}\n"
-            if failed > 0:
-                report += f"⚠️ Ошибок: {failed}"
-            
+        # Use the shared cleanup function
+        result = cleanup_expired_subscriptions(bot, notify_admins=False)
+        
+        if not result["success"]:
+            bot.reply_to(message, f"❌ Ошибка при очистке. Проверьте логи.")
+            return
+        
+        # Build report for the admin who triggered the command
+        report = f"📊 Статистика:\n"
+        report += f"• Просроченных (необработанных): {result['expired_count']}\n"
+        report += f"• Активных: {result['active_count']}\n\n"
+        
+        if result["expired_count"] == 0:
+            bot.reply_to(message, report + "✅ Просроченных подписок не найдено.")
+        else:
+            report += f"✅ Обработано: {result['processed']}\n"
+            if result["failed"] > 0:
+                report += f"⚠️ Ошибок: {result['failed']}"
             bot.reply_to(message, report)
-            
-        except Exception as e:
-            bot.reply_to(message, f"❌ Ошибка при очистке: {e}")
-            import traceback
-            log_error("admin_handlers", f"Cleanup error: {traceback.format_exc()}")
 
     @bot.message_handler(commands=['broadcast_all', 'broadcast_buyers', 'broadcast_nonbuyers'])
     def handle_broadcast(message: types.Message):

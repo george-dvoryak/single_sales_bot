@@ -241,6 +241,47 @@ def _prodamus_webhook():
     return process_webhook(bot)
 
 
+@application.post("/cleanup_expired_job")
+def _cleanup_expired_job():
+    """
+    Scheduled job endpoint for cleaning up expired subscriptions.
+    Protected by WEBHOOK_SECRET_TOKEN authentication.
+    Can be called by PythonAnywhere scheduled tasks or external cron jobs.
+    """
+    # Require authentication
+    if not _require_auth():
+        log_warning("cleanup_job", "Unauthorized attempt to access cleanup endpoint")
+        return "Unauthorized", 401
+    
+    try:
+        log_info("cleanup_job", "Starting scheduled cleanup of expired subscriptions")
+        from handlers.admin_handlers import cleanup_expired_subscriptions
+        
+        result = cleanup_expired_subscriptions(bot, notify_admins=True)
+        
+        if result["success"]:
+            log_info("cleanup_job", 
+                f"Cleanup completed: expired={result['expired_count']}, "
+                f"processed={result['processed']}, failed={result['failed']}")
+            
+            import json
+            return json.dumps({
+                "status": "success",
+                "expired_count": result["expired_count"],
+                "active_count": result["active_count"],
+                "processed": result["processed"],
+                "failed": result["failed"]
+            }, indent=2), 200
+        else:
+            log_error("cleanup_job", "Cleanup job failed")
+            return json.dumps({"status": "error", "message": "Cleanup failed"}), 500
+            
+    except Exception as e:
+        log_error("cleanup_job", f"Error in cleanup job: {e}", exc_info=True)
+        import json
+        return json.dumps({"status": "error", "message": str(e)}), 500
+
+
 # Configure Telegram webhook at import time when running under WSGI
 # Wrap in try-except to prevent WSGI import failures
 try:

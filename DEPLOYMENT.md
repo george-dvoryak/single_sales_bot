@@ -253,6 +253,93 @@ The bot will start in polling mode.
 - Make sure bot is admin in all channels
 - Bot must have "Invite users" permission
 
+## Setting Up Scheduled Task for Expired Subscriptions Cleanup
+
+The bot includes an automatic cleanup job that removes users from channels when their subscriptions expire. This job runs via a scheduled task in PythonAnywhere.
+
+### Step 1: Get Your Webhook URL and Secret Token
+
+From your `.env` file, note:
+- `WEBHOOK_HOST` (e.g., `yourusername.pythonanywhere.com`)
+- `WEBHOOK_SECRET_TOKEN` (your secret token)
+
+The cleanup endpoint will be: `https://yourusername.pythonanywhere.com/cleanup_expired_job`
+
+### Step 2: Create Scheduled Task in PythonAnywhere
+
+1. Go to **Tasks** tab in PythonAnywhere dashboard
+2. Click **"Create a new scheduled task"**
+3. Configure the task:
+   - **Command:** 
+     ```bash
+     curl -X POST https://yourusername.pythonanywhere.com/cleanup_expired_job -H "Authorization: Bearer YOUR_WEBHOOK_SECRET_TOKEN"
+     ```
+     Replace `yourusername` and `YOUR_WEBHOOK_SECRET_TOKEN` with your actual values.
+   
+   - **Hour:** Choose a time (e.g., `3` for 3 AM)
+   - **Minute:** `0` (start of the hour)
+   - **Enabled:** ✅ Check this box
+
+4. Click **"Create"**
+
+### Step 3: Test the Endpoint Manually
+
+You can test the endpoint before setting up the scheduled task:
+
+```bash
+curl -X POST https://yourusername.pythonanywhere.com/cleanup_expired_job \
+  -H "Authorization: Bearer YOUR_WEBHOOK_SECRET_TOKEN"
+```
+
+Expected response:
+```json
+{
+  "status": "success",
+  "expired_count": 0,
+  "active_count": 5,
+  "processed": 0,
+  "failed": 0
+}
+```
+
+### Alternative: Using Python Script in Scheduled Task
+
+If you prefer, you can create a Python script instead:
+
+1. Create file `~/cleanup_job.py`:
+```python
+import requests
+import os
+
+WEBHOOK_URL = "https://yourusername.pythonanywhere.com/cleanup_expired_job"
+SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN", "your_secret_token_here")
+
+response = requests.post(
+    WEBHOOK_URL,
+    headers={"Authorization": f"Bearer {SECRET_TOKEN}"}
+)
+print(response.text)
+```
+
+2. In PythonAnywhere Tasks, set:
+   - **Command:** `python3.10 ~/cleanup_job.py`
+   - **Hour:** `3`
+   - **Minute:** `0`
+
+### What the Job Does
+
+- Finds all subscriptions where `expiry <= current_time` and `expiry > 0`
+- Removes users from their course channels
+- Marks subscriptions as processed (sets `expiry = 0`)
+- Sends notification messages to users about expired access
+- Sends summary report to all admins
+
+### Monitoring
+
+- Check PythonAnywhere **Tasks** tab to see task execution history
+- Check bot logs for cleanup job entries
+- Admins receive Telegram notifications after each cleanup run
+
 ## Updating Code
 
 ```bash

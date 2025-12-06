@@ -127,6 +127,18 @@ python main.py
 - `/broadcast_buyers <message>` - Broadcast to users with purchases
 - `/broadcast_nonbuyers <message>` - Broadcast to users without purchases
 
+## Automatic Cleanup Job
+
+The bot includes an automatic cleanup job that removes users from channels when their subscriptions expire. 
+
+**For webhook mode (PythonAnywhere):**
+- Set up a scheduled task to call `/cleanup_expired_job` endpoint daily
+- See `DEPLOYMENT.md` for detailed setup instructions
+- The endpoint is protected by `WEBHOOK_SECRET_TOKEN` authentication
+
+**For polling mode:**
+- Use `/cleanup_expired` command manually or set up external cron job
+
 ## Menu Buttons (Admin Only)
 
 - 📊 Все подписки - View all active subscriptions
