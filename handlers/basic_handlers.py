@@ -4,6 +4,7 @@
 import datetime
 from telebot import types
 from db import get_active_subscriptions
+from config import OFERTA_URL
 from utils.keyboards import get_main_menu_keyboard
 from utils.text_utils import strip_html, format_for_telegram_html
 from utils.images import get_local_image_path
@@ -78,10 +79,9 @@ def register_handlers(bot):
     @bot.message_handler(func=lambda m: m.text == "Оферта")
     def handle_oferta(message: types.Message):
         user_id = message.from_user.id
-        oferta_url = "https://github.com/george-dvoryak/cdn/blob/main/oferta.pdf?raw=true"
         try:
-            bot.send_document(user_id, oferta_url, caption="Договор оферты (PDF)")
+            bot.send_document(user_id, OFERTA_URL, caption="Договор оферты (PDF)")
         except Exception:
             # Fallback: send link if Telegram couldn't download the file
-            bot.send_message(user_id, f"Договор оферты: {oferta_url}", disable_web_page_preview=False)
+            bot.send_message(user_id, f"Договор оферты: {OFERTA_URL}", disable_web_page_preview=False)
 

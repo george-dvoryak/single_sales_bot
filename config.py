@@ -39,6 +39,10 @@ PRODAMUS_FIXED_EMAIL = "orders.makeup@gmail.com"
 # Local directory where the bot will cache downloaded images from Google Sheets
 IMAGES_DIR = os.getenv("IMAGES_DIR", "images")
 
+# === Oferta ===
+# URL to the oferta (terms of service) PDF document
+OFERTA_URL = os.getenv("OFERTA_URL", "https://github.com/george-dvoryak/cdn/blob/main/oferta.pdf?raw=true")
+
 # === SQLite DB ===
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
 
