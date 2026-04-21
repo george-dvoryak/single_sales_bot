@@ -16,7 +16,7 @@ SUPPORT_MSG = get_text("support_message", "Если у вас есть вопр�
 
 def register_handlers(bot):
     """Register all basic handlers"""
-    
+
     @bot.message_handler(commands=['start'])
     def handle_start(message: types.Message):
         user_id = message.from_user.id
@@ -56,9 +56,9 @@ def register_handlers(bot):
         if not subs:
             bot.send_message(user_id, "У вас нет активных подписок.")
             return
-        
+
         text = "Ваши активные подписки:\n\n"
-        
+
         for s in subs:
             course_name = s["course_name"]
             clean_course_name = strip_html(course_name) if course_name else "Курс"
@@ -66,7 +66,7 @@ def register_handlers(bot):
             dt = datetime.datetime.fromtimestamp(expiry_ts)
             dstr = dt.strftime("%Y-%m-%d")
             text += f"• {clean_course_name}\n  Доступ до {dstr}\n\n"
-        
+
         bot.send_message(user_id, text, disable_web_page_preview=True)
 
     @bot.message_handler(func=lambda m: m.text == "Поддержка")
@@ -78,7 +78,7 @@ def register_handlers(bot):
     @bot.message_handler(func=lambda m: m.text == "Оферта")
     def handle_oferta(message: types.Message):
         user_id = message.from_user.id
-        oferta_url = "https://github.com/george-dvoryak/cdn/blob/main/oferta.pdf?raw=true"
+        oferta_url = "https://beauty-glam-course.payform.ru/rest/school/getPublicOffer?offerId=72471"
         try:
             bot.send_document(user_id, oferta_url, caption="Договор оферты (PDF)")
         except Exception:
