@@ -20,7 +20,9 @@ def get_main_menu_keyboard(user_id: int) -> types.ReplyKeyboardMarkup:
     if user_id in ADMIN_IDS:
         btn_admin_subs = types.KeyboardButton("📊 Все подписки")
         btn_admin_sheets = types.KeyboardButton("📋 Google Sheets")
+        btn_broadcast = types.KeyboardButton("📢 Рассылка")
         keyboard.add(btn_admin_subs, btn_admin_sheets)
+        keyboard.add(btn_broadcast)
     
     return keyboard
 
