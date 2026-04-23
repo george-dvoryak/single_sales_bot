@@ -94,7 +94,8 @@ def verify_signature(flat_form: dict, provided_signature: str) -> bool:
         return False
     
     secret_key_bytes = PRODAMUS_SECRET_KEY.encode("utf-8")
-    
+    log_info("prodamus_webhook", f"Secret key length={len(secret_key_bytes)} bytes")
+
     # Convert flat dict to nested structure
     payload = build_hmac_payload(flat_form)
     
@@ -113,14 +114,19 @@ def verify_signature(flat_form: dict, provided_signature: str) -> bool:
     
     # PHP json_encode escapes '/' by default, so we mimic this
     msg_to_sign = json_string.replace('/', r'\/')
-    
+    log_info("prodamus_webhook", f"Signing string length={len(msg_to_sign)}, preview={msg_to_sign[:120]!r}")
+
     # Calculate signature
     calculated_signature = hmac.new(
         secret_key_bytes,
         msg=msg_to_sign.encode("utf-8"),
         digestmod=hashlib.sha256
     ).hexdigest()
-    
+
+    log_info("prodamus_webhook",
+             f"Calculated sign preview={calculated_signature[:20]}..., "
+             f"Provided sign preview={provided_signature[:20]}...")
+
     # Compare signatures (constant-time comparison)
     return hmac.compare_digest(
         provided_signature.lower(),
@@ -134,7 +140,8 @@ def parse_request_data() -> dict:
     Supports both JSON and form-urlencoded content types.
     """
     content_type = (request.content_type or "").split(";")[0].strip()
-    
+    log_info("prodamus_webhook", f"Parsing request: content_type='{content_type}', body_size={request.content_length} bytes")
+
     if content_type == "application/json":
         json_data = request.get_json(force=True, silent=False)
         # Convert JSON to flat form structure
@@ -150,10 +157,12 @@ def parse_request_data() -> dict:
                             flat_form[f"products[{idx}][{field}]"] = field_value
             else:
                 flat_form[key] = value
-        return flat_form
     else:
         # application/x-www-form-urlencoded
-        return request.form.to_dict()
+        flat_form = request.form.to_dict()
+
+    log_info("prodamus_webhook", f"Parsed {len(flat_form)} fields: {list(flat_form.keys())[:15]}")
+    return flat_form
 
 
 def parse_order_id(order_id: str) -> tuple[Optional[int], Optional[str]]:
@@ -315,7 +324,13 @@ def handle_failed_payment(bot, payload: dict) -> None:
         log_error("prodamus_webhook", f"Error sending failed payment message to user {user_id}: {e}")
 
 
-def notify_admins_invalid_signature(bot, payload_data: dict, provided_signature: str, calculated_signature: str) -> None:
+def notify_admins_invalid_signature(
+    bot,
+    payload_data: dict,
+    provided_signature: str,
+    calculated_signature: str,
+    remote_ip: str = "unknown",
+) -> None:
     """Notify admins about invalid webhook signature."""
     try:
         order_id = payload_data.get("order_id", "unknown")
@@ -323,6 +338,7 @@ def notify_admins_invalid_signature(bot, payload_data: dict, provided_signature:
         
         admin_text = (
             f"⚠️ Prodamus webhook с неподтверждённой подписью!\n\n"
+            f"IP адрес: {remote_ip}\n"
             f"Order ID: {order_id}\n"
             f"Payment Status: {payment_status}\n"
             f"Provided Sign: {provided_signature[:20]}...\n"
@@ -346,21 +362,28 @@ def process_webhook(bot) -> tuple[str, int]:
     """
     try:
         log_info("prodamus_webhook", "Received POST request")
-        
+
+        remote_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown")
+        log_info("prodamus_webhook",
+                 f"Request from IP={remote_ip}, "
+                 f"Content-Type={request.content_type}, "
+                 f"User-Agent={request.headers.get('User-Agent', '')}")
+
         # Get signature from header
         provided_signature = str(request.headers.get("Sign", "")).strip()
+        log_info("prodamus_webhook", f"Sign header present={bool(provided_signature)}, length={len(provided_signature)}")
         if not provided_signature:
             log_error("prodamus_webhook", "Missing Sign header")
             return "Missing Sign header", 400
         
         # Parse request data
         flat_form = parse_request_data()
-        log_info("prodamus_webhook", f"Raw form keys: {list(flat_form.keys())[:10]}...")
         
         # Verify signature
         if not verify_signature(flat_form, provided_signature):
-            log_error("prodamus_webhook", "Invalid signature")
-            
+            log_warning("prodamus_webhook", f"Invalid signature from IP={remote_ip}")
+            log_warning("prodamus_webhook", f"Request headers: {dict(request.headers)}")
+
             # Try to extract payload for admin notification
             try:
                 payload = build_hmac_payload(flat_form)
@@ -373,7 +396,7 @@ def process_webhook(bot) -> tuple[str, int]:
                     msg=msg_to_sign.encode("utf-8"),
                     digestmod=hashlib.sha256
                 ).hexdigest()
-                notify_admins_invalid_signature(bot, payload, provided_signature, calculated_signature)
+                notify_admins_invalid_signature(bot, payload, provided_signature, calculated_signature, remote_ip)
             except Exception as e:
                 log_error("prodamus_webhook", f"Error preparing admin notification: {e}")
             
