@@ -254,11 +254,20 @@ def register_handlers(bot):
             conn = sqlite3.connect(DATABASE_PATH)
             cur = conn.cursor()
             if cmd == "/broadcast_all":
-                cur.execute("SELECT user_id FROM users;")
+                # users table was removed; gather all known user_ids from both payment tables
+                cur.execute(
+                    "SELECT DISTINCT user_id FROM prodamus_payments WHERE user_id IS NOT NULL "
+                    "UNION SELECT DISTINCT user_id FROM purchases WHERE user_id IS NOT NULL;"
+                )
             elif cmd == "/broadcast_buyers":
-                cur.execute("SELECT DISTINCT user_id FROM purchases;")
+                cur.execute("SELECT DISTINCT user_id FROM purchases WHERE user_id IS NOT NULL;")
             elif cmd == "/broadcast_nonbuyers":
-                cur.execute("SELECT user_id FROM users WHERE user_id NOT IN (SELECT DISTINCT user_id FROM purchases);")
+                # users who initiated a Prodamus payment but have no completed purchase
+                cur.execute(
+                    "SELECT DISTINCT user_id FROM prodamus_payments "
+                    "WHERE user_id IS NOT NULL "
+                    "AND user_id NOT IN (SELECT DISTINCT user_id FROM purchases WHERE user_id IS NOT NULL);"
+                )
             rows = cur.fetchall()
             recipients = [r[0] for r in rows]
             conn.close()
