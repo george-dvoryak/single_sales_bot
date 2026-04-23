@@ -185,31 +185,54 @@ def parse_order_id(order_id: str) -> tuple[Optional[int], Optional[str]]:
 
 def handle_successful_payment(bot, payload: dict) -> None:
     """Handle successful Prodamus payment."""
-    order_id = payload.get("order_id", "")  # Our custom order_id (user_id_course_id_timestamp)
-    order_num = payload.get("order_num", "")  # Prodamus internal order number
+    order_id = payload.get("order_id", "")  # Prodamus field (may be their internal ID)
+    order_num = payload.get("order_num", "")  # Prodamus field (may contain our custom order_id)
     customer_email = payload.get("customer_email", "")
     sum_amount = payload.get("sum", "0")
-    
+
     log_info("prodamus_webhook", f"Processing successful payment: order_id={order_id}, order_num={order_num}")
-    
-    # Prodamus echoes back our order_id unchanged and assigns its own order_num.
-    # Look up by our custom order_id first (stored in prodamus_payments.order_id).
+
+    # Prodamus sometimes swaps field semantics:
+    #   webhook order_id  = their internal number  (e.g. "43993815")
+    #   webhook order_num = our custom order_id    (e.g. "314112021_3_1776985973")
+    # We therefore try every combination to find the DB record.
+
     payment = None
+    our_order_id = None  # whichever field actually holds our custom order_id
+
+    # 1) Try webhook order_id as our DB order_id
     if order_id:
         payment = get_prodamus_payment(order_id)
-        if payment and order_num:
-            # Store Prodamus internal order_num for future lookups
-            try:
-                update_prodamus_order_num(order_id, order_num)
-            except Exception as e:
-                log_warning("prodamus_webhook", f"Could not update order_num: {e}")
-    
-    # Fallback: look up by Prodamus internal order_num (stored after a previous webhook)
+        if payment:
+            our_order_id = order_id
+
+    # 2) Try webhook order_num as our DB order_id (handles swapped fields)
+    if not payment and order_num:
+        payment = get_prodamus_payment(order_num)
+        if payment:
+            our_order_id = order_num
+            log_info("prodamus_webhook", f"Found payment using order_num as our order_id: {order_num}")
+
+    # 3) Try by the prodamus_order_num column (populated from previous webhooks)
+    if not payment and order_id:
+        payment = get_prodamus_payment_by_order_num(order_id)
+        if payment:
+            log_info("prodamus_webhook", f"Found payment by prodamus_order_num={order_id}")
+
     if not payment and order_num:
         payment = get_prodamus_payment_by_order_num(order_num)
         if payment:
-            log_info("prodamus_webhook", f"Found payment by Prodamus order_num={order_num}")
-    
+            log_info("prodamus_webhook", f"Found payment by prodamus_order_num={order_num}")
+
+    # Store whichever of order_id / order_num is their internal number as prodamus_order_num
+    if payment and our_order_id:
+        prodamus_internal = order_num if our_order_id == order_id else order_id
+        if prodamus_internal:
+            try:
+                update_prodamus_order_num(our_order_id, prodamus_internal)
+            except Exception as e:
+                log_warning("prodamus_webhook", f"Could not update prodamus_order_num: {e}")
+
     if not payment:
         log_warning("prodamus_webhook", f"Payment not found for order_id={order_id}, order_num={order_num}")
         return
@@ -267,30 +290,45 @@ def handle_successful_payment(bot, payload: dict) -> None:
 
 def handle_failed_payment(bot, payload: dict) -> None:
     """Handle failed Prodamus payment."""
-    order_id = payload.get("order_id", "")  # Our custom order_id (user_id_course_id_timestamp)
-    order_num = payload.get("order_num", "")  # Prodamus internal order number
+    order_id = payload.get("order_id", "")  # Prodamus field (may be their internal ID)
+    order_num = payload.get("order_num", "")  # Prodamus field (may contain our custom order_id)
     payment_status = payload.get("payment_status", "")
-    
+
     log_info("prodamus_webhook", f"Payment failed: status={payment_status}, order_id={order_id}, order_num={order_num}")
-    
-    # Prodamus echoes back our order_id unchanged and assigns its own order_num.
-    # Look up by our custom order_id first (stored in prodamus_payments.order_id).
+
+    # Same multi-strategy lookup as handle_successful_payment (fields may be swapped by Prodamus).
     payment = None
+    our_order_id = None
+
     if order_id:
         payment = get_prodamus_payment(order_id)
-        if payment and order_num:
-            # Store Prodamus internal order_num for future lookups
-            try:
-                update_prodamus_order_num(order_id, order_num)
-            except Exception as e:
-                log_warning("prodamus_webhook", f"Could not update order_num: {e}")
-    
-    # Fallback: look up by Prodamus internal order_num (stored after a previous webhook)
+        if payment:
+            our_order_id = order_id
+
+    if not payment and order_num:
+        payment = get_prodamus_payment(order_num)
+        if payment:
+            our_order_id = order_num
+            log_info("prodamus_webhook", f"Found payment using order_num as our order_id: {order_num}")
+
+    if not payment and order_id:
+        payment = get_prodamus_payment_by_order_num(order_id)
+        if payment:
+            log_info("prodamus_webhook", f"Found payment by prodamus_order_num={order_id}")
+
     if not payment and order_num:
         payment = get_prodamus_payment_by_order_num(order_num)
         if payment:
-            log_info("prodamus_webhook", f"Found payment by Prodamus order_num={order_num}")
-    
+            log_info("prodamus_webhook", f"Found payment by prodamus_order_num={order_num}")
+
+    if payment and our_order_id:
+        prodamus_internal = order_num if our_order_id == order_id else order_id
+        if prodamus_internal:
+            try:
+                update_prodamus_order_num(our_order_id, prodamus_internal)
+            except Exception as e:
+                log_warning("prodamus_webhook", f"Could not update prodamus_order_num: {e}")
+
     if not payment:
         log_warning("prodamus_webhook", f"Payment not found for order_id={order_id}, order_num={order_num}")
         return
@@ -409,30 +447,27 @@ def process_webhook(bot) -> tuple[str, int]:
         log_info("prodamus_webhook", f"Payment status: {payment_status}, order_id: {order_id}, order_num: {order_num}")
         
         # Update payment status in database.
-        # Primary lookup: by our custom order_id (prodamus_payments.order_id column).
-        if order_id:
+        # Try both fields as our DB order_id, because Prodamus may swap order_id / order_num.
+        status_updated = False
+        for candidate_order_id in filter(None, [order_id, order_num]):
             try:
-                update_prodamus_payment_status(order_id, payment_status)
-                # Also store Prodamus internal order_num for future cross-reference
-                if order_num:
-                    try:
-                        update_prodamus_order_num(order_id, order_num)
-                    except Exception as e:
-                        log_warning("prodamus_webhook", f"Could not update order_num: {e}")
+                update_prodamus_payment_status(candidate_order_id, payment_status)
+                # Check if the update actually hit a row by trying to fetch it
+                if get_prodamus_payment(candidate_order_id):
+                    status_updated = True
+                    break
             except Exception as e:
-                log_error("prodamus_webhook", f"Error updating payment status by order_id: {e}")
-                # Fallback: try by Prodamus internal order_num
-                if order_num:
-                    try:
-                        update_prodamus_payment_status_by_order_num(order_num, payment_status)
-                    except Exception as e2:
-                        log_error("prodamus_webhook", f"Error updating payment status by order_num: {e2}")
-        elif order_num:
-            # Only Prodamus internal order_num available
-            try:
-                update_prodamus_payment_status_by_order_num(order_num, payment_status)
-            except Exception as e:
-                log_error("prodamus_webhook", f"Error updating payment status by order_num: {e}")
+                log_warning("prodamus_webhook", f"Could not update status by order_id={candidate_order_id}: {e}")
+
+        if not status_updated:
+            # Fallback: try by prodamus_order_num column
+            for candidate_order_num in filter(None, [order_num, order_id]):
+                try:
+                    update_prodamus_payment_status_by_order_num(candidate_order_num, payment_status)
+                    status_updated = True
+                    break
+                except Exception as e:
+                    log_warning("prodamus_webhook", f"Could not update status by order_num={candidate_order_num}: {e}")
         
         # Handle payment status
         if payment_status == "success":

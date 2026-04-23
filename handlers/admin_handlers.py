@@ -456,6 +456,91 @@ def register_handlers(bot):
         )
         t.start()
 
+    @bot.message_handler(commands=["grant_access"])
+    def handle_grant_access(message: types.Message):
+        """Manually grant course access. Usage: /grant_access <user_id> <course_id>"""
+        user_id = message.from_user.id
+        if user_id not in ADMIN_IDS:
+            return
+
+        parts = message.text.strip().split()
+        if len(parts) != 3:
+            bot.reply_to(message, "Использование: /grant_access <user_id> <course_id>\nПример: /grant_access 314112021 3")
+            return
+
+        try:
+            target_user_id = int(parts[1])
+            target_course_id = str(parts[2])
+        except ValueError:
+            bot.reply_to(message, "❌ Неверные параметры. user_id должен быть числом.")
+            return
+
+        try:
+            courses = get_courses_data()
+        except Exception as e:
+            bot.reply_to(message, f"❌ Ошибка получения курсов: {e}")
+            return
+
+        course = next((c for c in courses if str(c.get("id")) == target_course_id), None)
+        if not course:
+            bot.reply_to(message, f"❌ Курс с ID={target_course_id} не найден.")
+            return
+
+        from db import add_purchase
+        course_name = course.get("name", f"ID {target_course_id}")
+        channel = str(course.get("channel", ""))
+        duration_days = int(course.get("duration_days", 0))
+
+        try:
+            expiry_ts = add_purchase(
+                target_user_id,
+                target_course_id,
+                course_name,
+                channel,
+                duration_days,
+                payment_id=f"manual_grant_by_{user_id}",
+            )
+        except Exception as e:
+            log_error("admin_handlers", f"grant_access: add_purchase failed: {e}")
+            bot.reply_to(message, f"❌ Ошибка при добавлении подписки: {e}")
+            return
+
+        invite_link = None
+        if channel:
+            try:
+                invite = bot.create_chat_invite_link(chat_id=channel, member_limit=1, expire_date=None)
+                invite_link = invite.invite_link
+            except Exception as e:
+                log_warning("admin_handlers", f"grant_access: could not create invite link: {e}")
+
+        from utils.text_utils import strip_html
+        clean_name = strip_html(course_name)
+        expiry_str = (
+            datetime.datetime.fromtimestamp(expiry_ts).strftime("%Y-%m-%d %H:%M")
+            if expiry_ts and expiry_ts > 0
+            else "бессрочно"
+        )
+
+        try:
+            user_msg = f"✅ Доступ к курсу «{clean_name}» предоставлен (до {expiry_str})."
+            if invite_link:
+                kb = types.InlineKeyboardMarkup()
+                kb.add(types.InlineKeyboardButton("Перейти в канал курса", url=invite_link))
+                bot.send_message(target_user_id, user_msg, reply_markup=kb)
+            else:
+                bot.send_message(target_user_id, user_msg)
+        except Exception as e:
+            log_warning("admin_handlers", f"grant_access: could not notify user {target_user_id}: {e}")
+
+        bot.reply_to(
+            message,
+            f"✅ Доступ выдан пользователю {target_user_id} на курс «{clean_name}».\n"
+            f"Действует до: {expiry_str}\n"
+            f"Канал: {channel or 'не указан'}\n"
+            f"Инвайт: {invite_link or 'не создан'}",
+        )
+        log_info("admin_handlers", f"Manual access granted: user={target_user_id}, course={target_course_id}, by_admin={user_id}")
+
     @bot.message_handler(commands=["diag_channels"])
     def handle_diag_channels(message: types.Message):
         if message.from_user.id not in ADMIN_IDS:
