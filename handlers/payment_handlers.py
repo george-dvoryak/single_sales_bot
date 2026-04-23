@@ -7,7 +7,8 @@ from telebot import types
 from google_sheets import get_courses_data
 from db import (
     has_active_subscription, add_purchase,
-    create_prodamus_payment, update_prodamus_payment_url
+    create_prodamus_payment, update_prodamus_payment_url,
+    cancel_pending_prodamus_payment,
 )
 from payments.yookassa import create_invoice, send_receipt_to_tax
 from payments.prodamus import generate_order_id, build_payment_link, get_payment_url
@@ -247,86 +248,113 @@ def register_handlers(bot):
         """Create Prodamus payment link and send it to user"""
         course_name = course.get("name", "Курс")
         price = float(course.get("price", 0))
-        
-        # Check for existing pending payment first
+
+        # Maximum age of a pending payment before we force-regenerate (24 hours)
+        MAX_PAYMENT_AGE_SEC = 24 * 60 * 60
+
+        # Look up the most recent pending payment for this user+course
         from db import get_connection
         conn = get_connection()
         cur = conn.cursor()
         cur.execute(
-            "SELECT order_id, payment_url FROM prodamus_payments WHERE user_id = ? AND course_id = ? AND payment_status = 'pending' ORDER BY created_at DESC LIMIT 1;",
-            (user_id, course_id)
+            """
+            SELECT order_id, payment_url, price, created_at
+            FROM prodamus_payments
+            WHERE user_id = ? AND course_id = ? AND payment_status = 'pending'
+            ORDER BY created_at DESC LIMIT 1;
+            """,
+            (user_id, course_id),
         )
         existing_payment = cur.fetchone()
 
-        if existing_payment and existing_payment["payment_url"]:
-            # Reuse existing payment with URL
-            order_id = existing_payment["order_id"]
-            payment_url = existing_payment["payment_url"]
-            log_info("payment_handlers", f"Reusing existing payment for user {user_id}, course {course_id}, order_id={order_id}")
-        else:
-            # Create new payment record
+        order_id = None
+        payment_url = None
+
+        if existing_payment:
+            stored_price = existing_payment["price"]
+            payment_age = int(time.time()) - (existing_payment["created_at"] or 0)
+
+            price_changed = (stored_price is None) or (abs(stored_price - price) > 0.01)
+            too_old = payment_age > MAX_PAYMENT_AGE_SEC
+
+            if price_changed or too_old:
+                # Invalidate the stale pending payment
+                reason = "price_outdated" if price_changed else "link_expired"
+                log_info(
+                    "payment_handlers",
+                    f"Cancelling stale pending payment for user {user_id}, course {course_id}, "
+                    f"order_id={existing_payment['order_id']}, reason={reason}, "
+                    f"stored_price={stored_price}, current_price={price}, age_sec={payment_age}",
+                )
+                cancel_pending_prodamus_payment(existing_payment["order_id"], reason)
+                # Will fall through to create a new payment below
+            else:
+                # Price is valid and payment is fresh
+                order_id = existing_payment["order_id"]
+                payment_url = existing_payment["payment_url"]
+                if payment_url:
+                    log_info(
+                        "payment_handlers",
+                        f"Reusing existing payment for user {user_id}, course {course_id}, order_id={order_id}",
+                    )
+                # If payment_url is NULL (record exists but URL was never saved) — fall through to generate URL
+
+        # Create a new payment record if we don't have a valid one
+        if order_id is None:
             payment_created = False
             for attempt in range(3):
-                # Generate new order_id for each attempt (with new timestamp)
                 order_id = generate_order_id(user_id, course_id)
-                
                 log_info(
                     "payment_handlers",
                     f"Creating Prodamus payment: user_id={user_id}, course_id={course_id}, "
-                    f"order_id={order_id}, attempt={attempt + 1}"
+                    f"order_id={order_id}, price={price}, attempt={attempt + 1}",
                 )
-                if create_prodamus_payment(order_id, user_id, course_id, ""):
+                if create_prodamus_payment(order_id, user_id, course_id, "", price=price):
                     payment_created = True
                     break
                 if attempt < 2:
                     time.sleep(0.3)
                     log_info("payment_handlers", f"Retrying payment creation for user {user_id}, attempt {attempt + 2}")
-            
+
             if not payment_created:
                 log_error(
                     "payment_handlers",
                     f"Failed to create Prodamus payment after retries: "
-                    f"user_id={user_id}, course_id={course_id}, last_order_id={order_id}"
+                    f"user_id={user_id}, course_id={course_id}, last_order_id={order_id}",
                 )
                 bot.send_message(user_id, "❌ Ошибка: не удалось создать заказ. Попробуйте позже.")
                 return
-            
-            payment_url = None
-        
+
         try:
             clean_course_name = strip_html(course_name)
-            
-            # If we don't have a payment URL yet, create it
+
+            # Generate payment URL if we don't have one yet
             if not payment_url:
-                # Build payment link
                 customer_extra = f"Покупка курса через Telegram бот (user_id: {user_id})"
-                
                 payment_link = build_payment_link(
                     order_id=order_id,
                     course_name=clean_course_name,
                     price=price,
                     customer_extra=customer_extra,
                 )
-                
-                # Get actual payment URL
+
                 bot.send_message(user_id, "⏳ Создаю ссылку на оплату...")
                 log_info(
                     "payment_handlers",
                     f"Requesting Prodamus payment URL: user_id={user_id}, course_id={course_id}, "
-                    f"order_id={order_id}, link={payment_link[:200]}"
+                    f"order_id={order_id}, link={payment_link[:200]}",
                 )
                 payment_url = get_payment_url(payment_link)
-                
+
                 if not payment_url:
                     log_error(
                         "payment_handlers",
                         f"Failed to get Prodamus payment URL: user_id={user_id}, course_id={course_id}, "
-                        f"order_id={order_id}, link={payment_link[:200]}"
+                        f"order_id={order_id}, link={payment_link[:200]}",
                     )
                     bot.send_message(user_id, "❌ Ошибка при создании ссылки на оплату. Попробуйте позже.")
                     return
-                
-                # Update payment URL in database
+
                 try:
                     update_prodamus_payment_url(order_id, payment_url)
                 except Exception as e:
@@ -336,9 +364,13 @@ def register_handlers(bot):
                         f"order_id={order_id}, payment_url={payment_url}: {e}",
                         exc_info=True,
                     )
-            
+
             # Send payment link to user
-            text = f"💳 Ссылка на оплату курса \"{clean_course_name}\":\n\n{payment_url}\n\nПосле успешной оплаты доступ к курсу будет предоставлен автоматически в течение 5 минут."
+            text = (
+                f"💳 Ссылка на оплату курса \"{clean_course_name}\":\n\n"
+                f"{payment_url}\n\n"
+                f"После успешной оплаты доступ к курсу будет предоставлен автоматически в течение 5 минут."
+            )
             kb = types.InlineKeyboardMarkup()
             kb.add(types.InlineKeyboardButton("💳 Перейти к оплате", url=payment_url))
             kb.add(types.InlineKeyboardButton("⬅️ Назад к каталогу", callback_data="back_to_catalog"))

@@ -67,7 +67,12 @@ def init_db(conn):
         cur.execute("ALTER TABLE prodamus_payments ADD COLUMN prodamus_order_num TEXT;")
         conn.commit()
     except sqlite3.OperationalError:
-        # Column already exists, ignore
+        pass
+    # Add price column if it doesn't exist (migration)
+    try:
+        cur.execute("ALTER TABLE prodamus_payments ADD COLUMN price REAL;")
+        conn.commit()
+    except sqlite3.OperationalError:
         pass
     conn.commit()
 
@@ -224,7 +229,7 @@ def get_all_active_subscriptions():
 
 
 # Prodamus payment tracking functions
-def create_prodamus_payment(order_id: str, user_id: int, course_id: str, customer_email: str):
+def create_prodamus_payment(order_id: str, user_id: int, course_id: str, customer_email: str, price: float = None):
     """
     Create a new Prodamus payment record.
     
@@ -233,6 +238,7 @@ def create_prodamus_payment(order_id: str, user_id: int, course_id: str, custome
         user_id: Telegram user ID
         course_id: Course ID
         customer_email: Customer email address
+        price: Course price at the moment of payment creation
         
     Returns:
         bool: True if created successfully, False if duplicate or error
@@ -243,10 +249,10 @@ def create_prodamus_payment(order_id: str, user_id: int, course_id: str, custome
     try:
         cur.execute(
             """
-            INSERT INTO prodamus_payments (order_id, user_id, course_id, customer_email, payment_status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'pending', ?, ?);
+            INSERT INTO prodamus_payments (order_id, user_id, course_id, customer_email, price, payment_status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?);
             """,
-            (order_id, user_id, course_id, customer_email, now, now)
+            (order_id, user_id, course_id, customer_email, price, now, now)
         )
         conn.commit()
         return True
@@ -262,6 +268,29 @@ def create_prodamus_payment(order_id: str, user_id: int, course_id: str, custome
     except Exception as e:
         log_error("db", f"create_prodamus_payment unexpected error: {e}", exc_info=True)
         return False
+
+
+def cancel_pending_prodamus_payment(order_id: str, reason: str = "price_outdated"):
+    """
+    Mark a pending Prodamus payment as cancelled with a given reason.
+    Used when price changes to invalidate the old payment link.
+
+    Args:
+        order_id: Order ID of the payment to cancel
+        reason: Cancellation reason stored as payment_status (e.g. 'price_outdated')
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    now = int(time.time())
+    cur.execute(
+        """
+        UPDATE prodamus_payments
+        SET payment_status = ?, payment_url = NULL, updated_at = ?
+        WHERE order_id = ? AND payment_status = 'pending';
+        """,
+        (reason, now, order_id)
+    )
+    conn.commit()
 
 
 def update_prodamus_payment_url(order_id: str, payment_url: str):
