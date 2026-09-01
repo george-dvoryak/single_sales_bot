@@ -42,6 +42,14 @@ IMAGES_DIR = os.getenv("IMAGES_DIR", "images")
 # === SQLite DB ===
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
 
+# === Diagnostics ===
+# Raw incoming webhook requests are appended here (see utils/request_capture.py).
+# Absolute by default so it does not depend on the WSGI server's working directory.
+REQUEST_CAPTURE_LOG = os.getenv(
+    "REQUEST_CAPTURE_LOG",
+    str(Path(__file__).parent / "webhook_requests.log"),
+)
+
 # === Google Sheets (Admin panel) ===
 # Put your Google Sheet ID (from its URL). We'll fetch CSV exports for simplicity.
 GSHEET_ID = os.getenv("GSHEET_ID")

@@ -1,0 +1,18 @@
+# --- Данные инстанса: НИКОГДА не попадают в репозиторий и не затираются при pull ---
+.env
+bot.db
+bot.db.*
+webhook_requests.log
+webhook_requests.log.*
+images/
+
+# --- Снимки прод-базы, скачанные для анализа (см. DEPLOY.md) ---
+snapshots/
+
+# --- Мусор ---
+.cursor/
+.DS_Store
+__pycache__/
+handlers/__pycache__/
+payments/__pycache__/
+utils/__pycache__/

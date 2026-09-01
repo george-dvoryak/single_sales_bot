@@ -234,11 +234,69 @@ def _webhook():
         return "ERROR", 500
 
 
-@application.post("/prodamus_webhook")
+# Prodamus notification endpoint.
+# Registered under several spellings and with strict_slashes=False, because a
+# trailing slash or a shortened path in the Prodamus settings would otherwise
+# 404 before reaching any of our code, leaving no trace in the logs.
+@application.route("/prodamus_webhook", methods=["GET", "POST"], strict_slashes=False)
+@application.route("/prodamus", methods=["GET", "POST"], strict_slashes=False)
+@application.route("/payment/prodamus", methods=["GET", "POST"], strict_slashes=False)
 def _prodamus_webhook():
     """Prodamus webhook endpoint with signature verification"""
+    from utils.request_capture import capture_full_request
+
+    # Capture first: this must happen even if verification or processing fails.
+    capture_full_request("prodamus")
+
+    if request.method == "GET":
+        # Prodamus (or a human) checking that the URL is alive — must not be a 405.
+        return "Prodamus webhook endpoint is alive. Send notifications here via POST.", 200
+
     from payments.prodamus_webhook import process_webhook
     return process_webhook(bot)
+
+
+@application.get("/prodamus_log")
+def _prodamus_log():
+    """Last captured incoming webhook requests (requires authentication)"""
+    if not _require_auth():
+        return "Unauthorized", 401
+
+    import json
+    from utils.request_capture import read_captures
+
+    try:
+        limit = min(int(request.args.get("n", 20)), 200)
+    except (TypeError, ValueError):
+        limit = 20
+
+    # ?q=prodamus filters out unrelated 404s from internet scanners
+    entries = read_captures(limit, contains=request.args.get("q"))
+    if not entries:
+        return "Пока ни одного запроса не поймано.", 200
+    return json.dumps(entries, indent=2, ensure_ascii=False), 200, {"Content-Type": "application/json; charset=utf-8"}
+
+
+@application.errorhandler(404)
+def _handle_404(e):
+    """Log requests that matched no route — this is how a wrong webhook URL looks."""
+    try:
+        from utils.request_capture import capture_miss
+        capture_miss("no_route_404")
+    except Exception:
+        pass
+    return "Not Found", 404
+
+
+@application.errorhandler(405)
+def _handle_405(e):
+    """Log requests that hit a known path with the wrong HTTP method."""
+    try:
+        from utils.request_capture import capture_miss
+        capture_miss("method_not_allowed_405")
+    except Exception:
+        pass
+    return "Method Not Allowed", 405
 
 
 # Configure Telegram webhook at import time when running under WSGI
