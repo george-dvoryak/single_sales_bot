@@ -243,10 +243,13 @@ def _webhook():
 @application.route("/payment/prodamus", methods=["GET", "POST"], strict_slashes=False)
 def _prodamus_webhook():
     """Prodamus webhook endpoint with signature verification"""
-    from utils.request_capture import capture_full_request
-
     # Capture first: this must happen even if verification or processing fails.
-    capture_full_request("prodamus")
+    # Wrapped defensively — diagnostics must never be able to block a payment.
+    try:
+        from utils.request_capture import capture_full_request
+        capture_full_request("prodamus")
+    except Exception as e:
+        log_warning("prodamus_webhook", f"Не удалось записать входящий запрос: {e}")
 
     if request.method == "GET":
         # Prodamus (or a human) checking that the URL is alive — must not be a 405.
